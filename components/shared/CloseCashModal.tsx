@@ -7,9 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useNotificationStore } from "@/store/notificationStore";
 import { closeCashRegister, getCashSummaryPreview } from "@/actions/cashActions";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, Printer, CheckCircle2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/utils";
+import { brandFullName } from "@/lib/brand";
+import { buildCashCloseHtml } from "@/lib/cashCloseTicket";
+import { openBrowserPrintWindow } from "@/lib/browserPrint";
 import { EMPLOYEES } from "@/lib/validations";
 import { useConfirm } from "@/components/providers/ConfirmProvider";
 
@@ -52,6 +55,9 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
   const addNotification = useNotificationStore((state) => state.addNotification);
   const _router = useRouter();
   const confirm = useConfirm();
+  const [isClosed, setIsClosed] = useState(false);
+  const [closedData, setClosedData] = useState<any>(null);
+  const [isPrinting, setIsPrinting] = useState(false);
 
 
   const getEmployeeNames = (employeeIds?: string[]): string => {
@@ -147,12 +153,9 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
 
       if (result.success && result.data) {
         setCashSummary(result.data);
+        setClosedData(result.data);
+        setIsClosed(true);
         addNotification("success", "Caja cerrada exitosamente");
-        setClosingAmount("");
-        setNotes("");
-        onClose();
-        // Forzar recarga completa de la página
-        window.location.reload();
       } else {
         addNotification("error", result.message || "Error al cerrar la caja");
       }
@@ -166,17 +169,98 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
   // Obtener el nombre de la caja desde la sesión
   const cajaName = session.cash_register?.name || 'CAJA BAR';
 
+  const finalizeAndReload = () => {
+    onClose();
+    window.location.reload();
+  };
+
+  const handlePrintArqueo = async () => {
+    if (!closedData) return;
+    setIsPrinting(true);
+    try {
+      const d = closedData;
+      const fmt = (iso?: string) => {
+        if (!iso) return "—";
+        try {
+          return new Date(iso).toLocaleString("es-AR", {
+            day: "2-digit", month: "2-digit", year: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+          });
+        } catch {
+          return iso;
+        }
+      };
+      const html = buildCashCloseHtml({
+        businessName: brandFullName,
+        arqueoNumber: d.arqueo_number ?? null,
+        cashRegisterName: d.cash_register_name || cajaName,
+        openedAt: fmt(d.opened_at),
+        closedAt: fmt(d.closed_at),
+        openedBy: d.opened_by_name || "—",
+        closedBy: d.closed_by_name || "—",
+        paymentTotals: d.paymentTotals || {},
+        totalSales: d.totalSales || 0,
+        totalIncomes: d.totalIncomes || 0,
+        totalExpenses: d.totalExpenses || 0,
+        openingAmount: d.totalOpeningAmount || 0,
+        expectedCash: d.expected_amount || 0,
+        countedCash: d.closing_amount || 0,
+        difference: d.difference || 0,
+        notes: d.closing_notes || "",
+      });
+      await openBrowserPrintWindow({ title: "Arqueo de Caja", html });
+    } catch (e) {
+      addNotification("error", "No se pudo imprimir el arqueo");
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { isClosed ? finalizeAndReload() : onClose(); } }}>
       <DialogContent className="max-w-5xl overflow-y-auto border border-border p-4 shadow-[0_30px_90px_rgba(0,0,0,0.12)] sm:p-6">
         <DialogHeader className="px-0 pt-0">
           <DialogTitle className="font-brand text-3xl text-foreground">
-            Cerrar {cajaName}
+            {isClosed ? `${cajaName} cerrada` : `Cerrar ${cajaName}`}
           </DialogTitle>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-            Revisa el arqueo, el efectivo esperado y cualquier diferencia antes de cerrar el turno.
+            {isClosed
+              ? "La caja ya fue cerrada. Podés imprimir el arqueo."
+              : "Revisa el arqueo, el efectivo esperado y cualquier diferencia antes de cerrar el turno."}
           </p>
         </DialogHeader>
+        {isClosed ? (
+          <div className="space-y-6">
+            <div className="flex items-center gap-3 rounded-[1.25rem] border border-green-400/30 bg-green-500/10 p-6">
+              <CheckCircle2 className="h-7 w-7 text-green-600" />
+              <div>
+                <p className="text-lg font-semibold text-foreground">Caja cerrada exitosamente</p>
+                <p className="text-sm text-muted-foreground">
+                  {closedData?.difference > 0.01
+                    ? `Sobrante: ${formatCurrency(Math.abs(closedData?.difference || 0))}`
+                    : closedData?.difference < -0.01
+                      ? `Faltante: ${formatCurrency(Math.abs(closedData?.difference || 0))}`
+                      : "Sin diferencia en caja"}
+                </p>
+              </div>
+            </div>
+            <div className="rounded-[1.5rem] border border-border bg-muted/20 p-6 space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Monto inicial</span><span className="font-medium text-foreground">{formatCurrency(closedData?.totalOpeningAmount || 0)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Ventas totales</span><span className="font-medium text-foreground">{formatCurrency(closedData?.totalSales || 0)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Efectivo esperado</span><span className="font-medium text-foreground">{formatCurrency(closedData?.expected_amount || 0)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Efectivo contado</span><span className="font-medium text-foreground">{formatCurrency(closedData?.closing_amount || 0)}</span></div>
+            </div>
+            <div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={handlePrintArqueo} disabled={isPrinting} className="px-6">
+                {isPrinting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+                Imprimir arqueo
+              </Button>
+              <Button type="button" onClick={finalizeAndReload} className="px-6">
+                Finalizar
+              </Button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* SECCIÓN DE INFORMACIÓN DEL ARQUEO */}
           <div className="space-y-4">
@@ -317,6 +401,7 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
             </Button>
           </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

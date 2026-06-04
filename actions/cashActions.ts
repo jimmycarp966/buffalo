@@ -1,6 +1,6 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 import {
   openCashRegisterSchema,
@@ -253,6 +253,7 @@ export async function closeCashRegister(data: CloseCashRegisterInput) {
     const difference = validated.closing_amount - expected_amount;
 
     // Cerrar SOLO esta sesión específica (no todas las del turno)
+    const closedAtIso = getCurrentDate().toISOString();
     const { data: closedSessions, error } = await supabase
       .from("cash_register_sessions")
       .update({
@@ -261,7 +262,7 @@ export async function closeCashRegister(data: CloseCashRegisterInput) {
         difference: difference,
         status: "closed",
         closed_by: user.id, // Usuario que cierra la caja
-        closed_at: getCurrentDate().toISOString(),
+        closed_at: closedAtIso,
         closing_notes: validated.closing_notes,
       })
       .eq("id", validated.session_id)
@@ -292,6 +293,32 @@ export async function closeCashRegister(data: CloseCashRegisterInput) {
     // Invalidar queries de React Query para sesiones de caja
     invalidateCashSessionsCache();
 
+    // ---- Datos para el ticket de arqueo (cierre de caja) ----
+    let openedByName = "—";
+    let closedByName = "—";
+    let arqueoNumber: number | null = null;
+    try {
+      const admin = createAdminClient();
+      const ids = Array.from(new Set([session.opened_by, user.id].filter(Boolean)));
+      if (ids.length) {
+        const { data: userRows } = await admin
+          .from("users")
+          .select("id, name")
+          .in("id", ids);
+        const nameById = new Map((userRows || []).map((u: any) => [u.id, u.name]));
+        openedByName = nameById.get(session.opened_by) || "—";
+        closedByName = nameById.get(user.id) || "—";
+      }
+      const { count } = await supabase
+        .from("cash_register_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("cash_register_id", session.cash_register_id)
+        .eq("status", "closed");
+      arqueoNumber = count ?? null;
+    } catch (e) {
+      console.error("Error preparando datos de arqueo:", e);
+    }
+
     return {
       success: true,
       data: {
@@ -305,7 +332,19 @@ export async function closeCashRegister(data: CloseCashRegisterInput) {
         totalIncomes,
         expected_amount,
         difference,
-        totalOpeningAmount
+        totalOpeningAmount,
+        // Datos extra para el ticket de arqueo
+        closing_amount: validated.closing_amount,
+        cashSales,
+        cashExpenses,
+        cashIncomes,
+        arqueo_number: arqueoNumber,
+        opened_at: session.opened_at,
+        closed_at: closedAtIso,
+        opened_by_name: openedByName,
+        closed_by_name: closedByName,
+        cash_register_name: session.cash_register?.name || "Caja",
+        closing_notes: validated.closing_notes || "",
       }
     };
   } catch (error: any) {
