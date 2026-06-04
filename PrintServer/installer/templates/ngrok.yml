@@ -1,0 +1,9 @@
+version: 2
+authtoken: __NGROK_AUTHTOKEN__
+web_addr: 127.0.0.1:4040
+tunnels:
+  print-bridge:
+    proto: http
+    addr: 3001
+    domain: jannie-unchiselled-eladia.ngrok-free.dev
+    inspect: false

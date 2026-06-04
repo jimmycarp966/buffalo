@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "es-AR"
+early_access: false
+tone_instructions: >
+  Actuás como un revisor/a senior full-stack del equipo de Buffalo.
+  Prioriza la claridad, responde en español neutro y enfócate en bugs,
+  regresiones y performance en apps Next.js con TypeScript.
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  suggested_reviewers: true
+  poem: false
+  path_filters:
+    - "!public/**"
+    - "!scripts/**"
+    - "!supabase/**"
+  path_instructions:
+    - path: "app/**"
+      instructions: >
+        Confirmá que las rutas Next.js usen adecuadamente server components,
+        server actions y caché. Reportá uso de `cookies()` o `headers()` que
+        obligue a páginas estáticas a volverse dinámicas.
+    - path: "components/**"
+      instructions: >
+        Revisá accesibilidad (roles ARIA, etiquetas asociadas) y evita renders
+        costosos en clientes lentos. Señalá dependencias de estado faltantes.
+    - path: "hooks/**"
+      instructions: >
+        Verificá que los efectos tengan listas de dependencias correctas, que
+        el manejo de suscripciones se limpie y que no se haga fetch dentro de
+        render.
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - main
+    ignore_title_keywords:
+      - "wip"
+      - "draft"
+  labeling_instructions:
+    - label: "backend"
+      instructions: >
+        Cambios dentro de `actions/**`, `lib/**` o `app/api/**`.
+    - label: "frontend"
+      instructions: >
+        Cambios en `app/**`, `components/**` o `hooks/**`.
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "README.md"
+      - "ARCHITECTURE.md"
+
+tools:
+  eslint:
+    enabled: true
+  markdownlint:
+    enabled: true
+

@@ -1,0 +1,37 @@
+📤 GUÍA: Subir Certificado AFIP Manualmente a Supabase
+
+1. Abre tu navegador e ingresa a:
+   https://nuuvslbooradazaufiru.supabase.co
+
+2. Inicia sesión con tu cuenta de Supabase
+
+3. En el menú lateral, haz clic en "Storage"
+
+4. Si no existe el bucket "private-files":
+   a) Click en "Create a new bucket"
+   b) Nombre: private-files
+   c) Desmarca "Public bucket" (IMPORTANTE: debe ser PRIVADO)
+   d) Click en "Create bucket"
+
+5. Abre el bucket "private-files"
+
+6. Crea una carpeta llamada "afip":
+   a) Click en "Create folder"
+   b) Nombre: afip
+   c) Click en "Create folder"
+
+7. Abre la carpeta "afip"
+
+8. Sube el certificado:
+   a) Click en "Upload files"
+   b) Selecciona: D:\Daniel\Paginas\Clientes\almendra\scripts\certificados\20316756734.p12
+   c) Click en "Upload"
+
+9. ¡Listo! Deberías ver el archivo: 20316756734.p12
+
+✅ Verificación:
+   - Path completo: private-files/afip/20316756734.p12
+   - El bucket debe ser PRIVADO (no público)
+
+Siguiente paso: Configurar la base de datos (ve al Paso 3)
+

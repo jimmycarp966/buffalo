@@ -1,0 +1,13 @@
+Febrero - TEST SIMPLE
+======================
+Este es un test simple
+Sin comandos especiales
+Solo texto plano
+
+1. Item uno
+2. Item dos
+3. Item tres
+
+TOTAL: $10.00
+======================
+Gracias!

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sin conexion | Buffalo Coffee & Food</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: #16162E;
+      background:
+        radial-gradient(circle at top, rgba(36, 36, 204, 0.16), transparent 38%),
+        radial-gradient(circle at bottom, rgba(36, 36, 204, 0.08), transparent 30%),
+        linear-gradient(180deg, #EDF0FA 0%, #E2E7F6 55%, #EDF0FA 100%);
+    }
+
+    .shell {
+      width: min(100%, 560px);
+      border: 1px solid rgba(36, 36, 204, 0.22);
+      border-radius: 28px;
+      padding: 40px 28px;
+      text-align: center;
+      background: rgba(252, 253, 255, 0.92);
+      box-shadow:
+        0 0 0 1px rgba(36, 36, 204, 0.06) inset,
+        0 24px 80px rgba(22, 22, 46, 0.16),
+        0 0 44px rgba(36, 36, 204, 0.12);
+      backdrop-filter: blur(18px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      margin-bottom: 18px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(36, 36, 204, 0.3);
+      background: rgba(36, 36, 204, 0.08);
+      color: #2424CC;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+    }
+
+    .symbol {
+      width: 120px;
+      margin: 0 auto 24px;
+      filter: drop-shadow(0 0 24px rgba(36, 36, 204, 0.22));
+    }
+
+    h1 {
+      margin-bottom: 14px;
+      color: #2424CC;
+      font-size: clamp(2rem, 6vw, 3rem);
+      line-height: 1.05;
+    }
+
+    p {
+      color: rgba(22, 22, 46, 0.78);
+      font-size: 1rem;
+      line-height: 1.7;
+    }
+
+    .actions {
+      margin-top: 28px;
+      display: flex;
+      justify-content: center;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 14px 24px;
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: #EDF0FA;
+      background: linear-gradient(135deg, #2424CC 0%, #3B4CE6 100%);
+      cursor: pointer;
+      transition: transform 160ms ease, box-shadow 160ms ease;
+      box-shadow: 0 0 0 1px rgba(36, 36, 204, 0.28) inset, 0 16px 36px rgba(36, 36, 204, 0.22);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 0 1px rgba(36, 36, 204, 0.38) inset, 0 20px 40px rgba(36, 36, 204, 0.3);
+    }
+
+    .status {
+      margin-top: 18px;
+      color: rgba(22, 22, 46, 0.6);
+      font-size: 0.9rem;
+    }
+
+    .status strong {
+      color: #2424CC;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="eyebrow">Buffalo Coffee & Food</div>
+    <img class="symbol" src="/buffalo-logo.png" alt="Buffalo logo">
+    <h1>Sin conexion</h1>
+    <p>
+      La barra quedo sin enlace por un momento. Cuando vuelva la red, recargamos automaticamente
+      para que puedas seguir con caja, cocina y pedidos.
+    </p>
+    <div class="actions">
+      <button onclick="location.reload()">Reintentar ahora</button>
+    </div>
+    <p class="status">Estado: <strong id="connection-status">sin conexion</strong></p>
+  </main>
+
+  <script>
+    function updateConnectionStatus() {
+      const statusElement = document.getElementById("connection-status");
+      if (navigator.onLine) {
+        statusElement.textContent = "conectado";
+        setTimeout(() => location.reload(), 900);
+      } else {
+        statusElement.textContent = "sin conexion";
+      }
+    }
+
+    window.addEventListener("online", updateConnectionStatus);
+    window.addEventListener("offline", updateConnectionStatus);
+    updateConnectionStatus();
+  </script>
+</body>
+</html>

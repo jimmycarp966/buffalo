@@ -1,0 +1,9 @@
+{
+  "productName": "Buffalo Print Bridge",
+  "transport": "ngrok-free",
+  "localPort": 3001,
+  "singleActivePc": true,
+  "ngrokAuthtoken": "",
+  "publicHost": "",
+  "notes": "Bridge configurado para usar el dominio asignado de ngrok."
+}

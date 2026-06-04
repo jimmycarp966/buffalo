@@ -1,0 +1,29 @@
+graph LR
+    subgraph Frontend["Frontend (Next.js 15)"]
+        UI[React Components]
+        Navbar[Navbar Responsive]
+        Dashboard[Dashboard]
+    end
+
+    subgraph ServerActions["Server Actions"]
+        SA[20 Server Actions]
+    end
+
+    subgraph Backend["Backend (Supabase)"]
+        Auth[Auth + RLS]
+        DB[(PostgreSQL)]
+    end
+
+    subgraph State["Estado"]
+        Zustand[Zustand Store]
+        RQ[React Query Cache]
+    end
+
+    UI --> SA
+    Navbar --> UI
+    Dashboard --> UI
+    SA --> Auth
+    Auth --> DB
+    UI --> Zustand
+    UI --> RQ
+    RQ --> SA
