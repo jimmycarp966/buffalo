@@ -2121,6 +2121,7 @@ BEGIN
     BEGIN
       INSERT INTO auth.users (
         id,
+        instance_id,
         aud,
         role,
         email,
@@ -2137,6 +2138,7 @@ BEGIN
       )
       VALUES (
         v_admin_id,
+        '00000000-0000-0000-0000-000000000000',
         'authenticated',
         'authenticated',
         v_admin_email,
@@ -2155,6 +2157,7 @@ BEGIN
       WHEN undefined_column THEN
         INSERT INTO auth.users (
           id,
+          instance_id,
           aud,
           role,
           email,
@@ -2167,6 +2170,7 @@ BEGIN
         )
         VALUES (
           v_admin_id,
+          '00000000-0000-0000-0000-000000000000',
           'authenticated',
           'authenticated',
           v_admin_email,
@@ -2181,6 +2185,7 @@ BEGIN
   ELSE
     UPDATE auth.users
     SET encrypted_password = v_admin_password_hash,
+        instance_id = COALESCE(instance_id, '00000000-0000-0000-0000-000000000000'),
         email_confirmed_at = COALESCE(email_confirmed_at, NOW()),
         updated_at = NOW(),
         raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || jsonb_build_object('provider', 'email', 'providers', to_jsonb(ARRAY['email'])),
