@@ -734,6 +734,30 @@ export async function getCashSummaryPreview(sessionId: string) {
     // Calcular monto esperado SOLO para EFECTIVO (monto inicial + ventas efectivo + ingresos efectivo - gastos efectivo)
     const expected_amount = totalOpeningAmount + cashSales + cashIncomes - cashExpenses;
 
+    // ---- Metadatos para la vista previa del arqueo ----
+    let openedByName = "—";
+    let closedByName = "—";
+    let arqueoNumber: number | null = null;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const admin = createAdminClient();
+      const ids = Array.from(new Set([session.opened_by, user?.id].filter(Boolean)));
+      if (ids.length) {
+        const { data: userRows } = await admin.from("users").select("id, name").in("id", ids);
+        const nameById = new Map((userRows || []).map((u: any) => [u.id, u.name]));
+        openedByName = nameById.get(session.opened_by) || "—";
+        closedByName = (user?.id ? nameById.get(user.id) : null) || "—";
+      }
+      const { count } = await supabase
+        .from("cash_register_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("cash_register_id", session.cash_register_id)
+        .eq("status", "closed");
+      arqueoNumber = (count ?? 0) + 1;
+    } catch (e) {
+      console.error("Error preparando metadatos de arqueo (preview):", e);
+    }
+
     return {
       success: true,
       data: {
@@ -747,7 +771,13 @@ export async function getCashSummaryPreview(sessionId: string) {
         totalIncomes,
         expected_amount,
         difference: 0, // Para preview, la diferencia se calcula cuando se ingresa el monto real
-        totalOpeningAmount
+        totalOpeningAmount,
+        // Metadatos para la vista previa del arqueo
+        opened_at: session.opened_at,
+        cash_register_name: session.cash_register?.name || "Caja",
+        opened_by_name: openedByName,
+        closed_by_name: closedByName,
+        arqueo_number: arqueoNumber,
       }
     };
   } catch (error: any) {

@@ -16,6 +16,17 @@ import { openBrowserPrintWindow } from "@/lib/browserPrint";
 import { EMPLOYEES } from "@/lib/validations";
 import { useConfirm } from "@/components/providers/ConfirmProvider";
 
+function formatTicketDate(iso?: string): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("es-AR", {
+      day: "2-digit", month: "2-digit", year: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
 
 interface PaymentSummary {
   [methodName: string]: number;
@@ -51,6 +62,11 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
     expected_amount: number;
     difference: number;
     totalOpeningAmount?: number;
+    opened_at?: string;
+    opened_by_name?: string;
+    closed_by_name?: string;
+    cash_register_name?: string;
+    arqueo_number?: number | null;
   } | null>(null);
   const addNotification = useNotificationStore((state) => state.addNotification);
   const _router = useRouter();
@@ -58,6 +74,7 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
   const [isClosed, setIsClosed] = useState(false);
   const [closedData, setClosedData] = useState<any>(null);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
 
 
   const getEmployeeNames = (employeeIds?: string[]): string => {
@@ -179,23 +196,12 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
     setIsPrinting(true);
     try {
       const d = closedData;
-      const fmt = (iso?: string) => {
-        if (!iso) return "—";
-        try {
-          return new Date(iso).toLocaleString("es-AR", {
-            day: "2-digit", month: "2-digit", year: "2-digit",
-            hour: "2-digit", minute: "2-digit", second: "2-digit",
-          });
-        } catch {
-          return iso;
-        }
-      };
       const html = buildCashCloseHtml({
         businessName: brandFullName,
         arqueoNumber: d.arqueo_number ?? null,
         cashRegisterName: d.cash_register_name || cajaName,
-        openedAt: fmt(d.opened_at),
-        closedAt: fmt(d.closed_at),
+        openedAt: formatTicketDate(d.opened_at),
+        closedAt: formatTicketDate(d.closed_at),
         openedBy: d.opened_by_name || "—",
         closedBy: d.closed_by_name || "—",
         paymentTotals: d.paymentTotals || {},
@@ -213,6 +219,39 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
       addNotification("error", "No se pudo imprimir el arqueo");
     } finally {
       setIsPrinting(false);
+    }
+  };
+
+  // Vista previa del arqueo ANTES de cerrar (con los datos del momento)
+  const handlePreviewArqueo = async () => {
+    if (!cashSummary) return;
+    setIsPreviewing(true);
+    try {
+      const counted = closingAmount ? parseFloat(closingAmount) || 0 : 0;
+      const diff = closingAmount ? counted - efectivoEsperado : 0;
+      const html = buildCashCloseHtml({
+        businessName: brandFullName,
+        arqueoNumber: cashSummary.arqueo_number ?? null,
+        cashRegisterName: cashSummary.cash_register_name || cajaName,
+        openedAt: formatTicketDate(cashSummary.opened_at),
+        closedAt: "(vista previa)",
+        openedBy: cashSummary.opened_by_name || "—",
+        closedBy: cashSummary.closed_by_name || "—",
+        paymentTotals: cashSummary.paymentTotals || {},
+        totalSales: cashSummary.totalSales || 0,
+        totalIncomes: cashSummary.totalIncomes || 0,
+        totalExpenses: cashSummary.totalExpenses || 0,
+        openingAmount: cashSummary.totalOpeningAmount || 0,
+        expectedCash: efectivoEsperado,
+        countedCash: counted,
+        difference: diff,
+        notes: notes || "",
+      });
+      await openBrowserPrintWindow({ title: "Vista previa — Arqueo de Caja", html });
+    } catch (e) {
+      addNotification("error", "No se pudo generar la vista previa");
+    } finally {
+      setIsPreviewing(false);
     }
   };
 
@@ -391,9 +430,13 @@ export function CloseCashModal({ open, onClose, session }: CloseCashModalProps) 
           </div>
 
           {/* BOTONES DEL FORMULARIO */}
-          <div className="mt-6 flex justify-end space-x-3 border-t border-border pt-6">
+          <div className="mt-6 flex flex-wrap justify-end gap-3 border-t border-border pt-6">
             <Button type="button" variant="outline" onClick={onClose} className="border-border bg-muted/30 px-6 text-foreground hover:bg-muted">
               Cancelar
+            </Button>
+            <Button type="button" variant="outline" onClick={handlePreviewArqueo} disabled={isPreviewing || !cashSummary} className="px-6">
+              {isPreviewing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+              Vista previa
             </Button>
             <Button type="submit" disabled={isLoading} className="px-6">
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
