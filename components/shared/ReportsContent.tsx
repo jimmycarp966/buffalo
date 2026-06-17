@@ -146,7 +146,7 @@ export function ReportsContent() {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-buffalo-caramel" />
+          <Loader2 className="h-8 w-8 animate-spin text-febrero-caramel" />
         </div>
       </div>
     );
@@ -163,7 +163,7 @@ export function ReportsContent() {
         </div>
         <ExportButtons
           data={reportData}
-          filename="reporte-buffalo"
+          filename="reporte-febrero"
         />
       </div>
 
@@ -228,7 +228,7 @@ export function ReportsContent() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {reportData.topProducts?.reduce((sum: number, p: any) => sum + parseInt(p.total_quantity || 0), 0) || 0}
+                  {reportData.stats?.total_products ?? 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Unidades totales</p>
               </CardContent>
@@ -241,12 +241,9 @@ export function ReportsContent() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-600">
-                  {formatCurrency(
-                    parseFloat(reportData.incomeExpenses?.total_income || "0") -
-                    parseFloat(reportData.incomeExpenses?.total_expenses || "0")
-                  )}
+                  {formatCurrency(reportData.incomeExpenses?.net_profit || 0)}
                 </div>
-                <p className="text-xs text-muted-foreground">Ganancia neta</p>
+                <p className="text-xs text-muted-foreground">Ventas − gastos − compras</p>
               </CardContent>
             </Card>
 
@@ -256,7 +253,7 @@ export function ReportsContent() {
                 <Award className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-buffalo-espresso">
+                <div className="text-2xl font-bold text-febrero-espresso">
                   {getBestEmployee()}
                 </div>
                 <p className="text-xs text-muted-foreground">Mayor ventas</p>
@@ -285,7 +282,7 @@ export function ReportsContent() {
                     reportData.topProducts.map((product: any, index: number) => (
                       <div key={index} className="flex items-center justify-between p-3 rounded-lg border">
                         <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-buffalo-espresso/20 text-buffalo-caramel font-bold text-sm">
+                          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-febrero-espresso/20 text-febrero-caramel font-bold text-sm">
                             {index + 1}
                           </div>
                           <div>
@@ -485,16 +482,25 @@ export function ReportsContent() {
                     <div className="flex items-center justify-between p-3 rounded-lg bg-red-500/10 border border-red-500/20">
                       <div>
                         <p className="font-medium text-red-700">Gastos</p>
-                        <p className="text-sm text-red-600">Gastos operativos</p>
+                        <p className="text-sm text-red-600">Gastos de caja</p>
                       </div>
                       <p className="text-2xl font-bold text-red-700">
                         {formatCurrency(parseFloat(reportData.incomeExpenses.total_expenses || "0"))}
                       </p>
                     </div>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                      <div>
+                        <p className="font-medium text-orange-700">Compras</p>
+                        <p className="text-sm text-orange-600">Compras a proveedores</p>
+                      </div>
+                      <p className="text-2xl font-bold text-orange-700">
+                        {formatCurrency(parseFloat(reportData.incomeExpenses.total_purchases || "0"))}
+                      </p>
+                    </div>
                     <div className="flex items-center justify-between p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
                       <div>
                         <p className="font-medium text-blue-700">Margen Neto</p>
-                        <p className="text-sm text-blue-600">Ganancia final</p>
+                        <p className="text-sm text-blue-600">Ventas − gastos − compras</p>
                       </div>
                       <p className="text-2xl font-bold text-blue-700">
                         {formatCurrency(parseFloat(reportData.incomeExpenses.net_profit || "0"))}

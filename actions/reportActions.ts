@@ -56,15 +56,26 @@ export async function getSalesStats(
     const total_transactions = sales?.length || 0;
     const average_ticket = total_transactions > 0 ? total_sales / total_transactions : 0;
 
+    // Unidades vendidas reales (suma de cantidades de ítems de ventas completadas)
+    const { data: itemsData } = await supabase
+      .from("sale_items")
+      .select("quantity, sales!inner(status, created_at)")
+      .eq("sales.status", "completed")
+      .gte("sales.created_at", startDate)
+      .lte("sales.created_at", endDate)
+      .limit(100000);
+    const total_products =
+      itemsData?.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0) || 0;
+
     return {
       success: true,
       data: {
         total_sales: total_sales.toString(),
         total_transactions,
         average_ticket: average_ticket.toString(),
-        total_products: 0,
-        net_margin: 18.5,
-        growth_percentage: 12.3
+        total_products,
+        net_margin: 0,
+        growth_percentage: 0
       }
     };
   } catch (error: any) {
@@ -285,9 +296,21 @@ export async function getIncomeVsExpenses(startDate: string, endDate: string) {
 
     if (expensesError) throw expensesError;
 
+    // Compras del período (insumos/mercadería comprada a proveedores) — también
+    // son un costo que debe descontarse del resultado, no solo los gastos de caja.
+    const { data: purchasesData, error: purchasesError } = await supabase
+      .from("purchases")
+      .select("total_amount")
+      .gte("created_at", startDate)
+      .lte("created_at", endDate);
+
+    if (purchasesError) throw purchasesError;
+
     const total_income = salesData?.reduce((sum, sale) => sum + sale.total_amount, 0) || 0;
     const total_expenses = expensesData?.reduce((sum, expense) => sum + expense.amount, 0) || 0;
-    const net_profit = total_income - total_expenses;
+    const total_purchases = purchasesData?.reduce((sum, p) => sum + (p.total_amount || 0), 0) || 0;
+    const total_costs = total_expenses + total_purchases;
+    const net_profit = total_income - total_costs;
     const profit_margin = total_income > 0 ? (net_profit / total_income) * 100 : 0;
 
     return {
@@ -295,6 +318,8 @@ export async function getIncomeVsExpenses(startDate: string, endDate: string) {
       data: {
         total_income,
         total_expenses,
+        total_purchases,
+        total_costs,
         net_profit,
         profit_margin
       }
@@ -452,7 +477,7 @@ export async function getSalesByEmployee(startDate: string, endDate: string) {
       } else {
         employeeMap.set(userId, {
           employee_id: userId,
-          employee_name: sale.users?.[0]?.name || "Empleado desconocido",
+          employee_name: (Array.isArray(sale.users) ? sale.users[0]?.name : (sale.users as any)?.name) || "Sin nombre",
           total_sales: sale.total_amount,
           transaction_count: 1,
           areas_worked: ["BAR"]
