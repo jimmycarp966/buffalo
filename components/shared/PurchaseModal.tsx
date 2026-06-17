@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { useNotificationStore } from "@/store/notificationStore";
 import { createPurchase, getSuppliers } from "@/actions/supplierActions";
 import { getProducts } from "@/actions/productActions";
+import { getIngredients } from "@/actions/ingredientActions";
 import { getPaymentMethods } from "@/actions/saleActions";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -28,13 +29,14 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [ingredients, setIngredients] = useState<any[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
   const addNotification = useNotificationStore((state) => state.addNotification);
   const router = useRouter();
 
   const [formData, setFormData] = useState({
     supplier_id: "",
-    items: [] as Array<{ product_id: string; quantity: string; unit_cost: string }>,
+    items: [] as Array<{ ref: string; description: string; quantity: string; unit_cost: string }>,
     payment_status: "pending" as "paid" | "pending",
     payment_method_id: "",
   });
@@ -52,9 +54,10 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
   }, [open]);
 
   const loadData = async () => {
-    const [suppliersResult, productsResult, paymentMethodsResult] = await Promise.all([
+    const [suppliersResult, productsResult, ingredientsResult, paymentMethodsResult] = await Promise.all([
       getSuppliers(),
       getProducts(),
+      getIngredients(),
       getPaymentMethods(),
     ]);
 
@@ -69,18 +72,21 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
       setProducts(productsResult.data);
     }
 
+    if (ingredientsResult.success && ingredientsResult.data) {
+      setIngredients(ingredientsResult.data);
+    }
+
     if (paymentMethodsResult.success && paymentMethodsResult.data) {
       setPaymentMethods(paymentMethodsResult.data);
     }
   };
 
   const addItem = () => {
-    if (products.length === 0) return;
     setFormData({
       ...formData,
       items: [
         ...formData.items,
-        { product_id: products[0].id, quantity: "1", unit_cost: (products[0].cost_price ?? 0).toString() },
+        { ref: "", description: "", quantity: "1", unit_cost: "0" },
       ],
     });
   };
@@ -96,11 +102,16 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
     const newItems = [...formData.items];
     newItems[index] = { ...newItems[index], [field]: value };
 
-    // Si cambia el producto, actualizar el costo por defecto
-    if (field === "product_id") {
-      const product = products.find((p) => p.id === value);
-      if (product) {
-        newItems[index].unit_cost = (product.cost_price ?? 0).toString();
+    // Al elegir el ítem, sugerir un costo por defecto
+    if (field === "ref") {
+      if (value.startsWith("prod:")) {
+        const product = products.find((p) => p.id === value.slice(5));
+        if (product) newItems[index].unit_cost = (product.cost_price ?? 0).toString();
+        newItems[index].description = "";
+      } else if (value.startsWith("ing:")) {
+        const ing = ingredients.find((i) => i.id === value.slice(4));
+        if (ing) newItems[index].unit_cost = (ing.cost ?? 0).toString();
+        newItems[index].description = "";
       }
     }
 
@@ -108,7 +119,7 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
   };
 
   const totalPurchase = formData.items.reduce(
-    (sum, item) => sum + (parseFloat(item.unit_cost) || 0) * (parseInt(item.quantity) || 0),
+    (sum, item) => sum + (parseFloat(item.unit_cost) || 0) * (parseFloat(item.quantity) || 0),
     0
   );
 
@@ -117,13 +128,35 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
     setIsLoading(true);
 
     try {
+      if (formData.items.some((it) => !it.ref || (it.ref === "free" && !it.description.trim()))) {
+        addNotification("error", "Completá qué compraste en cada ítem.");
+        setIsLoading(false);
+        return;
+      }
+
+      const items = formData.items.map((item) => {
+        const base = {
+          product_id: null as string | null,
+          ingredient_id: null as string | null,
+          description: null as string | null,
+          quantity: parseFloat(item.quantity) || 1,
+          unit_cost: parseFloat(item.unit_cost) || 0,
+        };
+        if (item.ref.startsWith("prod:")) {
+          base.product_id = item.ref.slice(5);
+          base.description = products.find((p) => p.id === base.product_id)?.name || null;
+        } else if (item.ref.startsWith("ing:")) {
+          base.ingredient_id = item.ref.slice(4);
+          base.description = ingredients.find((i) => i.id === base.ingredient_id)?.name || null;
+        } else {
+          base.description = item.description?.trim() || "Ítem";
+        }
+        return base;
+      });
+
       const dataToSubmit = {
         supplier_id: formData.supplier_id,
-        items: formData.items.map(item => ({
-          product_id: item.product_id,
-          quantity: parseInt(item.quantity) || 1,
-          unit_cost: parseFloat(item.unit_cost) || 0
-        })),
+        items,
         payment_status: formData.payment_status,
         payment_method_id:
           formData.payment_status === "paid" && formData.payment_method_id
@@ -134,7 +167,7 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
       const result = await createPurchase(dataToSubmit);
 
       if (result.success) {
-        addNotification("success", "Compra registrada exitosamente. Stock actualizado.");
+        addNotification("success", "Compra registrada exitosamente.");
         onClose();
         router.refresh();
       } else {
@@ -175,7 +208,7 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>Productos *</Label>
+              <Label>Detalle de la compra *</Label>
               <Button type="button" variant="outline" size="sm" onClick={addItem}>
                 <Plus className="h-4 w-4" />
               </Button>
@@ -183,31 +216,51 @@ export function PurchaseModal({ open, onClose }: PurchaseModalProps) {
 
             {formData.items.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                Agregá productos a la compra
+                Agregá lo que compraste (insumos, productos de la carta, o escribí el detalle)
               </p>
             ) : (
               <div className="space-y-2">
                 {formData.items.map((item, index) => (
                   <div key={index} className="flex gap-2 items-end">
                     <div className="flex-1 space-y-1">
-                      <Label className="text-xs">Producto</Label>
+                      <Label className="text-xs">¿Qué compraste?</Label>
                       <select
-                        value={item.product_id}
-                        onChange={(e) => updateItem(index, "product_id", e.target.value)}
+                        value={item.ref}
+                        onChange={(e) => updateItem(index, "ref", e.target.value)}
                         className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm"
                       >
-                        {products.map((product) => (
-                          <option key={product.id} value={product.id}>
-                            {product.name}
-                          </option>
-                        ))}
+                        <option value="">Elegí…</option>
+                        <option value="free">✏️ Escribir otro…</option>
+                        {ingredients.length > 0 && (
+                          <optgroup label="Insumos">
+                            {ingredients.map((ing) => (
+                              <option key={ing.id} value={`ing:${ing.id}`}>{ing.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {products.length > 0 && (
+                          <optgroup label="Productos (carta)">
+                            {products.map((product) => (
+                              <option key={product.id} value={`prod:${product.id}`}>{product.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
+                      {item.ref === "free" && (
+                        <Input
+                          value={item.description}
+                          onChange={(e) => updateItem(index, "description", e.target.value)}
+                          placeholder="Ej: Queso crema"
+                          className="mt-1 h-9"
+                        />
+                      )}
                     </div>
                     <div className="w-20 space-y-1">
                       <Label className="text-xs">Cant.</Label>
                       <Input
                         type="number"
-                        min="1"
+                        min="0.01"
+                        step="0.01"
                         value={item.quantity}
                         onChange={(e) =>
                           updateItem(index, "quantity", e.target.value)

@@ -19,12 +19,14 @@ const purchaseSchema = z.object({
   items: z
     .array(
       z.object({
-        product_id: z.string().uuid(),
-        quantity: z.number().int().min(1),
+        product_id: z.string().uuid().optional().nullable(),
+        ingredient_id: z.string().uuid().optional().nullable(),
+        description: z.string().optional().nullable(),
+        quantity: z.number().min(0.01),
         unit_cost: z.number().min(0),
       })
     )
-    .min(1, "Debe agregar al menos un producto"),
+    .min(1, "Debe agregar al menos un ítem"),
   payment_status: z.enum(["paid", "pending"]).optional().default("pending"),
   payment_method_id: z.string().uuid().optional().nullable(),
 });
@@ -178,13 +180,18 @@ export async function createPurchase(data: z.infer<typeof purchaseSchema>) {
 
     if (purchaseError) throw purchaseError;
 
-    // Insertar items y actualizar stock
+    // Insertar items. Solo los productos de la carta actualizan stock;
+    // los insumos y los ítems con detalle libre solo quedan registrados.
     for (const item of validated.items) {
-      // Insertar item de compra
+      const productId = (item as any).product_id || null;
+      const ingredientId = (item as any).ingredient_id || null;
+
       await supabase.from("purchase_items").insert([
         {
           purchase_id: purchase.id,
-          product_id: item.product_id,
+          product_id: productId,
+          ingredient_id: ingredientId,
+          description: (item as any).description || null,
           quantity: item.quantity,
           unit_cost: item.unit_cost,
           subtotal: item.unit_cost * item.quantity,
@@ -192,23 +199,23 @@ export async function createPurchase(data: z.infer<typeof purchaseSchema>) {
         },
       ]);
 
-      // Incrementar stock
-      await supabase.rpc("increment_product_stock", {
-        product_id: item.product_id,
-        quantity: item.quantity,
-      });
-
-      // Registrar movimiento de inventario
-      await supabase.from("inventory_movements").insert([
-        {
-          product_id: item.product_id,
-          movement_type: "entry",
-          quantity: item.quantity,
-          reason: `Compra #${purchase.id}`,
-          user_id: user.id,
-          created_at: getCurrentDate().toISOString(),
-        },
-      ]);
+      if (productId) {
+        const qty = Math.round(item.quantity);
+        await supabase.rpc("increment_product_stock", {
+          product_id: productId,
+          quantity: qty,
+        });
+        await supabase.from("inventory_movements").insert([
+          {
+            product_id: productId,
+            movement_type: "entry",
+            quantity: qty,
+            reason: `Compra #${purchase.id}`,
+            user_id: user.id,
+            created_at: getCurrentDate().toISOString(),
+          },
+        ]);
+      }
     }
 
     revalidatePath("/compras");

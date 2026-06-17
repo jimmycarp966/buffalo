@@ -134,12 +134,14 @@ export const purchaseSchema = z.object({
   items: z
     .array(
       z.object({
-        product_id: z.string().uuid(),
-        quantity: z.number().int().min(1),
+        product_id: z.string().uuid().optional().nullable(),
+        ingredient_id: z.string().uuid().optional().nullable(),
+        description: z.string().optional().nullable(),
+        quantity: z.number().min(0.01),
         unit_cost: z.number().min(0),
       })
     )
-    .min(1, "Debe agregar al menos un producto"),
+    .min(1, "Debe agregar al menos un ítem"),
   payment_status: z.enum(["paid", "pending"]).optional().default("pending"),
   payment_method_id: z.string().uuid().optional().nullable(),
 });

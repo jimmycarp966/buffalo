@@ -2483,6 +2483,11 @@ CREATE POLICY "staff_manage_product_ingredients" ON public.product_ingredients F
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.ingredients TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_ingredients TO authenticated;
 
+-- Compras: además de productos de la carta, permitir comprar insumos o ítems libres
+ALTER TABLE public.purchase_items ALTER COLUMN product_id DROP NOT NULL;
+ALTER TABLE public.purchase_items ADD COLUMN IF NOT EXISTS ingredient_id uuid REFERENCES public.ingredients(id) ON DELETE SET NULL;
+ALTER TABLE public.purchase_items ADD COLUMN IF NOT EXISTS description text;
+
 -- Verification queries.
 WITH required_tables AS (
   SELECT unnest(ARRAY[
