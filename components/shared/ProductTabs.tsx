@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { ProductsTable } from "@/components/shared/ProductsTable";
+import { IngredientsTable } from "@/components/shared/IngredientsTable";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -33,8 +34,9 @@ export function ProductTabs({ products, lowStockProducts }: ProductTabsProps) {
 
   return (
     <Tabs defaultValue={defaultTab} className="w-full" suppressHydrationWarning>
-      <TabsList className="grid w-full grid-cols-1">
+      <TabsList className="grid w-full grid-cols-2">
         <TabsTrigger value="productos">Productos</TabsTrigger>
+        <TabsTrigger value="insumos">Insumos</TabsTrigger>
       </TabsList>
 
       <TabsContent value="productos">
@@ -47,6 +49,20 @@ export function ProductTabs({ products, lowStockProducts }: ProductTabsProps) {
           </CardHeader>
           <CardContent>
             <ProductsTable products={products || []} />
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="insumos">
+        <Card>
+          <CardHeader>
+            <CardTitle>Insumos</CardTitle>
+            <CardDescription>
+              Cargá tus insumos con su costo. Después armás la receta de cada producto y el sistema calcula el costo de producción.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <IngredientsTable />
           </CardContent>
         </Card>
       </TabsContent>

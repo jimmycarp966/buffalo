@@ -18,7 +18,7 @@ function normalizeProductPayload<T extends Partial<ProductInput>>(data: T): T {
   };
 }
 
-export async function createProduct(data: ProductInput) {
+export async function createProduct(data: ProductInput, recipe?: Array<{ ingredient_id: string; quantity: number }>) {
   try {
     const supabase = await createClient();
     const {
@@ -57,6 +57,17 @@ export async function createProduct(data: ProductInput) {
 
     if (error) throw error;
 
+    // Guardar receta (insumos) del producto
+    if (recipe && recipe.length > 0) {
+      const items = recipe
+        .filter((r) => r.ingredient_id)
+        .map((r) => ({ product_id: product.id, ingredient_id: r.ingredient_id, quantity: r.quantity || 0 }));
+      if (items.length > 0) {
+        const { error: recipeError } = await supabase.from("product_ingredients").insert(items);
+        if (recipeError) console.error("Error guardando receta:", recipeError);
+      }
+    }
+
     // Guardar primer precio en historial
     await supabase.from("price_history").insert([
       {
@@ -84,7 +95,7 @@ export async function createProduct(data: ProductInput) {
   }
 }
 
-export async function updateProduct(id: string, data: Partial<ProductInput>) {
+export async function updateProduct(id: string, data: Partial<ProductInput>, recipe?: Array<{ ingredient_id: string; quantity: number }>) {
   try {
     const supabase = await createClient();
     const {
@@ -131,6 +142,18 @@ export async function updateProduct(id: string, data: Partial<ProductInput>) {
       .single();
 
     if (error) throw error;
+
+    // Reemplazar la receta (insumos) del producto si se envió
+    if (recipe !== undefined) {
+      await supabase.from("product_ingredients").delete().eq("product_id", id);
+      const items = (recipe || [])
+        .filter((r) => r.ingredient_id)
+        .map((r) => ({ product_id: id, ingredient_id: r.ingredient_id, quantity: r.quantity || 0 }));
+      if (items.length > 0) {
+        const { error: recipeError } = await supabase.from("product_ingredients").insert(items);
+        if (recipeError) console.error("Error actualizando receta:", recipeError);
+      }
+    }
 
     // Guardar historial de precios si cambió
     if (

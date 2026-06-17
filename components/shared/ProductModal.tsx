@@ -5,14 +5,20 @@ import {
   Loader2,
   Upload,
   X,
+  Plus,
+  Trash2,
+  ChefHat,
 } from "lucide-react";
 import { createProduct, updateProduct } from "@/actions/productActions";
+import { getIngredients, getProductRecipe } from "@/actions/ingredientActions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { useNotificationStore } from "@/store/notificationStore";
+import { formatCurrency } from "@/lib/utils";
+import { ingredientLineCost, recipeTotalCost, recipeUnitLabel } from "@/lib/recipeCost";
 
 interface Product {
   id: string;
@@ -48,6 +54,8 @@ export function ProductModal({ open, onClose, product }: ProductModalProps) {
   const addNotification = useNotificationStore((state) => state.addNotification);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [ingredients, setIngredients] = useState<Array<{ id: string; name: string; unit: string; cost: number }>>([]);
+  const [recipe, setRecipe] = useState<Array<{ ingredient_id: string; quantity: string }>>([]);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -112,11 +120,54 @@ export function ProductModal({ open, onClose, product }: ProductModalProps) {
         .eq("is_active", true)
         .order("display_order");
       if (active && data) setCategories(data as Array<{ id: string; name: string }>);
+      const ing = await getIngredients();
+      if (active && ing.success) {
+        setIngredients(ing.data as Array<{ id: string; name: string; unit: string; cost: number }>);
+      }
     })();
     return () => {
       active = false;
     };
   }, [open]);
+
+  // Cargar la receta del producto en edición (o limpiarla en alta)
+  useEffect(() => {
+    if (!open) return;
+    if (!product) {
+      setRecipe([]);
+      return;
+    }
+    let active = true;
+    (async () => {
+      const res = await getProductRecipe(product.id);
+      if (active && res.success) {
+        setRecipe(
+          (res.data || []).map((r: any) => ({
+            ingredient_id: r.ingredient_id,
+            quantity: (r.quantity ?? "").toString(),
+          }))
+        );
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [product, open]);
+
+  // Receta -> costo de producción -> autocompleta el Precio Costo (igual editable)
+  useEffect(() => {
+    if (ingredients.length === 0) return;
+    if (!recipe || recipe.length === 0) return;
+    const items = recipe
+      .filter((r) => r.ingredient_id)
+      .map((r) => {
+        const ing = ingredients.find((i) => i.id === r.ingredient_id);
+        return { unit: ing?.unit || "unidad", cost: ing?.cost || 0, quantity: parseFloat(r.quantity) || 0 };
+      });
+    if (items.length === 0) return;
+    const total = recipeTotalCost(items);
+    setFormData((prev) => ({ ...prev, cost_price: total.toFixed(2) }));
+  }, [recipe, ingredients]);
 
   useEffect(() => {
     const costPrice = parseFloat(formData.cost_price) || 0;
@@ -152,9 +203,13 @@ export function ProductModal({ open, onClose, product }: ProductModalProps) {
         category_id: formData.category_id || null,
       };
 
+      const recipePayload = recipe
+        .filter((r) => r.ingredient_id)
+        .map((r) => ({ ingredient_id: r.ingredient_id, quantity: parseFloat(r.quantity) || 0 }));
+
       const result = product
-        ? await updateProduct(product.id, dataToSubmit)
-        : await createProduct(dataToSubmit);
+        ? await updateProduct(product.id, dataToSubmit, recipePayload)
+        : await createProduct(dataToSubmit, recipePayload);
 
       if (result.success) {
         addNotification(
@@ -409,6 +464,132 @@ export function ProductModal({ open, onClose, product }: ProductModalProps) {
                   Calcular precio automaticamente
                 </Label>
               </div>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className={sectionTitleClassName}>
+                <span className="inline-flex items-center gap-2">
+                  <ChefHat className="h-4 w-4" /> Receta / Costo de producción
+                </span>
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Cargá los insumos que lleva el producto. El costo se calcula solo y completa el{" "}
+                <b>Precio Costo</b> de arriba (igual lo podés ajustar a mano).
+              </p>
+
+              {ingredients.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-border p-3 text-xs text-muted-foreground">
+                  Todavía no cargaste insumos. Andá a la pestaña <b>Insumos</b> (arriba, en Productos) y
+                  cargá jamón, pan, queso, etc. con su costo. Después volvé acá a armar la receta.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {recipe.map((row, index) => {
+                    const ing = ingredients.find((i) => i.id === row.ingredient_id);
+                    const lineCost = ing
+                      ? ingredientLineCost(ing.unit, ing.cost, parseFloat(row.quantity) || 0)
+                      : 0;
+                    return (
+                      <div
+                        key={index}
+                        className="flex flex-wrap items-end gap-2 rounded-2xl border border-border bg-muted/20 p-2 sm:flex-nowrap"
+                      >
+                        <div className="min-w-[140px] flex-1 space-y-1">
+                          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Insumo
+                          </Label>
+                          <select
+                            value={row.ingredient_id}
+                            onChange={(e) => {
+                              const next = [...recipe];
+                              next[index] = { ...next[index], ingredient_id: e.target.value };
+                              setRecipe(next);
+                            }}
+                            className="h-9 w-full rounded-xl border border-border bg-background px-2 text-sm"
+                          >
+                            <option value="">Elegí un insumo…</option>
+                            {ingredients.map((i) => (
+                              <option key={i.id} value={i.id}>
+                                {i.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="w-24 space-y-1">
+                          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Cant. ({ing ? recipeUnitLabel(ing.unit) : "—"})
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={row.quantity}
+                            onChange={(e) => {
+                              const next = [...recipe];
+                              next[index] = { ...next[index], quantity: e.target.value };
+                              setRecipe(next);
+                            }}
+                            placeholder="0"
+                            className="h-9 rounded-xl"
+                          />
+                        </div>
+                        <div className="w-24 space-y-1">
+                          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Costo
+                          </Label>
+                          <div className="flex h-9 items-center justify-end px-2 text-sm font-medium tabular-nums text-foreground">
+                            {formatCurrency(lineCost)}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          onClick={() => setRecipe(recipe.filter((_, i) => i !== index))}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl"
+                      onClick={() => setRecipe([...recipe, { ingredient_id: "", quantity: "" }])}
+                    >
+                      <Plus className="mr-1.5 h-4 w-4" /> Agregar insumo
+                    </Button>
+                    {recipe.some((r) => r.ingredient_id) && (
+                      <div className="text-right">
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          Costo de producción
+                        </span>
+                        <p className="text-lg font-bold tabular-nums text-foreground">
+                          {formatCurrency(
+                            recipeTotalCost(
+                              recipe
+                                .filter((r) => r.ingredient_id)
+                                .map((r) => {
+                                  const ing = ingredients.find((i) => i.id === r.ingredient_id);
+                                  return {
+                                    unit: ing?.unit || "unidad",
+                                    cost: ing?.cost || 0,
+                                    quantity: parseFloat(r.quantity) || 0,
+                                  };
+                                })
+                            )
+                          )}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
