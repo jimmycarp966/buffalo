@@ -3,32 +3,33 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  getDailySales, 
-  getTopSellingProducts, 
+import {
+  getDailySales,
+  getTopSellingProducts,
   getSalesByPaymentMethod,
   getSalesByCashRegister,
   getHourlySalesDistribution,
-  getIncomeVsExpenses
+  getIncomeVsExpenses,
 } from "@/actions/reportActions";
 import { formatCurrency } from "@/lib/utils";
-import { 
-  LineChart, 
-  BarChart, 
-  PieChart, 
-  AreaChart, 
+import { argDayToUtcRange } from "@/lib/businessDay";
+import {
+  LineChart,
+  BarChart,
+  PieChart,
+  AreaChart,
   ComposedChart,
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
   ResponsiveContainer,
   Line,
   Bar,
   Pie,
   Cell,
-  Area
+  Area,
 } from "recharts";
 
 interface ChartData {
@@ -40,82 +41,79 @@ interface ChartData {
   incomeExpenses: any;
 }
 
-export function ReportsCharts() {
+interface ReportsChartsProps {
+  startDate?: string; // YYYY-MM-DD (hora ARG)
+  endDate?: string;   // YYYY-MM-DD (hora ARG)
+  cashRegister?: string;
+}
+
+// Paleta Febrero (terracota / caramelo / arena / espresso)
+const brand = {
+  terracotta: "#A8341C",
+  caramel: "#B5743A",
+  sand: "#E8D5B0",
+  espresso: "#2B1B12",
+  olive: "#7C6F4E",
+};
+const pieColors = [brand.terracotta, brand.caramel, brand.sand, brand.olive, brand.espresso, "#C77D3A"];
+
+const fmtDay = (value: string) =>
+  value ? new Date(`${value}T12:00:00`).toLocaleDateString("es-AR", { day: "2-digit", month: "short" }) : value;
+
+export function ReportsCharts({ startDate, endDate }: ReportsChartsProps) {
   const [data, setData] = useState<ChartData>({
     dailySales: [],
     topProducts: [],
     paymentMethods: [],
     cashRegisters: [],
     hourlyDistribution: [],
-    incomeExpenses: null
+    incomeExpenses: null,
   });
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadChartData();
-  }, []);
+    let cancelled = false;
 
-  const loadChartData = async () => {
-    setIsLoading(true);
-    console.log("🔄 Cargando datos de gráficos...");
-    try {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+    const load = async () => {
+      setIsLoading(true);
+      try {
+        // Mismo rango que el resto de la pantalla (anclado a hora Argentina)
+        const today = new Date();
+        const fallbackStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
+        const fallbackEnd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-28`;
+        const { startISO, endISO } = argDayToUtcRange(startDate || fallbackStart, endDate || fallbackEnd);
 
-      console.log("📅 Fechas:", startOfMonth, "a", endOfMonth);
+        const [dailySales, topProducts, paymentMethods, cashRegisters, hourlyDistribution, incomeExpenses] =
+          await Promise.all([
+            getDailySales(startISO, endISO),
+            getTopSellingProducts(startISO, endISO, 10),
+            getSalesByPaymentMethod(startISO, endISO),
+            getSalesByCashRegister(startISO, endISO),
+            getHourlySalesDistribution(startISO, endISO),
+            getIncomeVsExpenses(startISO, endISO),
+          ]);
 
-      // Cargar datos uno por uno para mejor debugging
-      console.log("📊 Cargando ventas diarias...");
-      const dailySales = await getDailySales(startOfMonth, endOfMonth);
-      console.log("✅ Ventas diarias:", dailySales.data?.length || 0, "registros");
+        if (cancelled) return;
+        setData({
+          dailySales: dailySales.data || [],
+          topProducts: topProducts.data || [],
+          paymentMethods: paymentMethods.data || [],
+          cashRegisters: cashRegisters.data || [],
+          hourlyDistribution: hourlyDistribution.data || [],
+          incomeExpenses: incomeExpenses.data,
+        });
+      } catch (error) {
+        console.error("Error loading chart data:", error);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
 
-      console.log("📈 Cargando top productos...");
-      const topProducts = await getTopSellingProducts(startOfMonth, endOfMonth, 10);
-      console.log("✅ Top productos:", topProducts.data?.length || 0, "productos");
-
-      console.log("💳 Cargando métodos de pago...");
-      const paymentMethods = await getSalesByPaymentMethod(startOfMonth, endOfMonth);
-      console.log("✅ Métodos de pago:", paymentMethods.data?.length || 0, "métodos");
-
-      console.log("🏪 Cargando cajas...");
-      const cashRegisters = await getSalesByCashRegister(startOfMonth, endOfMonth);
-      console.log("✅ Cajas:", cashRegisters.data?.length || 0, "cajas");
-
-      console.log("📊 Cargando distribución horaria...");
-      const hourlyDistribution = await getHourlySalesDistribution(startOfMonth, endOfMonth);
-      console.log("✅ Distribución horaria:", hourlyDistribution.data?.length || 0, "horas");
-
-      console.log("💰 Cargando ingresos vs gastos...");
-      const incomeExpenses = await getIncomeVsExpenses(startOfMonth, endOfMonth);
-      console.log("✅ Ingresos vs gastos:", incomeExpenses.data ? "OK" : "Sin datos");
-
-      setData({
-        dailySales: dailySales.data || [],
-        topProducts: topProducts.data || [],
-        paymentMethods: paymentMethods.data || [],
-        cashRegisters: cashRegisters.data || [],
-        hourlyDistribution: hourlyDistribution.data || [],
-        incomeExpenses: incomeExpenses.data
-      });
-
-      console.log("✅ Todos los datos cargados exitosamente");
-    } catch (error) {
-      console.error("❌ Error loading chart data:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Colores Shell
-  const shellColors = {
-    red: "#DC2626",
-    yellow: "#FCD34D",
-    darkRed: "#991B1B",
-    lightYellow: "#FEF3C7"
-  };
-
-  const pieColors = [shellColors.red, shellColors.yellow, shellColors.darkRed, shellColors.lightYellow, "#F59E0B", "#EF4444"];
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [startDate, endDate]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -137,13 +135,11 @@ export function ReportsCharts() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Gráficos de Reportes</CardTitle>
-          <CardDescription>Análisis visual de datos</CardDescription>
+          <CardTitle>Gráficos</CardTitle>
+          <CardDescription>Análisis visual del período</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="h-64 flex items-center justify-center text-muted-foreground">
-            <p>Cargando gráficos...</p>
-          </div>
+          <div className="h-64 animate-pulse rounded-xl border border-border bg-muted/40" />
         </CardContent>
       </Card>
     );
@@ -152,8 +148,8 @@ export function ReportsCharts() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Gráficos de Reportes</CardTitle>
-        <CardDescription>Análisis visual interactivo de datos</CardDescription>
+        <CardTitle>Gráficos</CardTitle>
+        <CardDescription>Análisis visual del período seleccionado</CardDescription>
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="daily" className="w-full">
@@ -164,73 +160,70 @@ export function ReportsCharts() {
           </TabsList>
 
           <TabsContent value="daily" className="space-y-6">
-            {/* Gráfico 1: Ventas Diarias */}
+            {/* Ventas Diarias */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Ventas Diarias (Últimos 30 días)</h3>
-              <ResponsiveContainer width="100%" height={400}>
+              <h3 className="text-lg font-semibold mb-4">Ventas por día</h3>
+              <ResponsiveContainer width="100%" height={360}>
                 <LineChart data={data.dailySales}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(value) => new Date(value).toLocaleDateString("es-AR", { day: "2-digit", month: "short" })}
-                  />
-                  <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                  <XAxis dataKey="date" tickFormatter={fmtDay} />
+                  <YAxis tickFormatter={(value) => formatCurrency(value)} width={80} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Line 
-                    type="monotone" 
-                    dataKey="amount" 
-                    stroke={shellColors.red} 
+                  <Line
+                    type="monotone"
+                    dataKey="sales"
+                    name="Ventas"
+                    stroke={brand.terracotta}
                     strokeWidth={3}
-                    dot={{ fill: shellColors.yellow, strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6, fill: shellColors.red }}
+                    dot={{ fill: brand.caramel, strokeWidth: 2, r: 3 }}
+                    activeDot={{ r: 6, fill: brand.terracotta }}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Gráfico 2: Distribución Horaria */}
+            {/* Distribución Horaria (hora Argentina) */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Distribución Horaria de Ventas</h3>
-              <ResponsiveContainer width="100%" height={400}>
+              <h3 className="text-lg font-semibold mb-4">Ventas por hora (hora Argentina)</h3>
+              <ResponsiveContainer width="100%" height={360}>
                 <BarChart data={data.hourlyDistribution}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="hour" />
-                  <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                  <XAxis dataKey="hour" tickFormatter={(h) => `${String(h).padStart(2, "0")}h`} />
+                  <YAxis tickFormatter={(value) => formatCurrency(value)} width={80} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="total_sales" fill={shellColors.yellow} />
+                  <Bar dataKey="total_sales" name="Ventas" fill={brand.caramel} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </TabsContent>
 
           <TabsContent value="products" className="space-y-6">
-            {/* Gráfico 3: Top Productos */}
+            {/* Top Productos (barras horizontales) */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Top 10 Productos Más Vendidos</h3>
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={data.topProducts} layout="horizontal">
+              <h3 className="text-lg font-semibold mb-4">Top 10 productos más vendidos</h3>
+              <ResponsiveContainer width="100%" height={420}>
+                <BarChart data={data.topProducts} layout="vertical" margin={{ left: 16, right: 16 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" tickFormatter={(value) => formatCurrency(value)} />
-                  <YAxis dataKey="product_name" type="category" width={120} />
+                  <YAxis dataKey="product_name" type="category" width={140} tick={{ fontSize: 12 }} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="total_revenue" fill={shellColors.red} />
+                  <Bar dataKey="total_revenue" name="Ingresos" fill={brand.terracotta} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Gráfico 4: Métodos de Pago */}
+            {/* Métodos de Pago */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Ventas por Método de Pago</h3>
-              <ResponsiveContainer width="100%" height={400}>
+              <h3 className="text-lg font-semibold mb-4">Ventas por método de pago</h3>
+              <ResponsiveContainer width="100%" height={360}>
                 <PieChart>
                   <Pie
                     data={data.paymentMethods}
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
                     outerRadius={120}
-                    fill="#8884d8"
                     dataKey="total_amount"
                   >
                     {data.paymentMethods.map((entry, index) => (
@@ -244,47 +237,43 @@ export function ReportsCharts() {
           </TabsContent>
 
           <TabsContent value="analysis" className="space-y-6">
-            {/* Gráfico: Ventas por Área */}
+            {/* Ventas por Área */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Ventas por Área</h3>
-              <ResponsiveContainer width="100%" height={400}>
+              <h3 className="text-lg font-semibold mb-4">Ventas por área</h3>
+              <ResponsiveContainer width="100%" height={360}>
                 <AreaChart data={data.cashRegisters}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="cash_register" />
-                  <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                  <YAxis tickFormatter={(value) => formatCurrency(value)} width={80} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area 
-                    type="monotone" 
-                    dataKey="total_sales" 
-                    stackId="1" 
-                    stroke={shellColors.red} 
-                    fill={shellColors.yellow} 
-                  />
+                  <Area type="monotone" dataKey="total_sales" name="Ventas" stackId="1" stroke={brand.terracotta} fill={brand.sand} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Gráfico 7: Ingresos vs Gastos */}
+            {/* Ingresos vs Gastos */}
             {data.incomeExpenses && (
               <div>
-                <h3 className="text-lg font-semibold mb-4">Ingresos vs Gastos</h3>
-                <ResponsiveContainer width="100%" height={400}>
-                  <ComposedChart data={[
-                    {
-                      name: "Ingresos",
-                      ingresos: data.incomeExpenses.total_income,
-                      gastos: data.incomeExpenses.total_expenses,
-                      neto: data.incomeExpenses.net_profit
-                    }
-                  ]}>
+                <h3 className="text-lg font-semibold mb-4">Ingresos vs costos</h3>
+                <ResponsiveContainer width="100%" height={360}>
+                  <ComposedChart
+                    data={[
+                      {
+                        name: "Período",
+                        ingresos: data.incomeExpenses.total_income,
+                        costos: data.incomeExpenses.total_costs,
+                        neto: data.incomeExpenses.net_profit,
+                      },
+                    ]}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" />
-                    <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                    <YAxis tickFormatter={(value) => formatCurrency(value)} width={80} />
                     <Tooltip content={<CustomTooltip />} />
                     <Legend />
-                    <Bar dataKey="ingresos" fill={shellColors.yellow} name="Ingresos" />
-                    <Bar dataKey="gastos" fill={shellColors.red} name="Gastos" />
-                    <Line type="monotone" dataKey="neto" stroke={shellColors.darkRed} strokeWidth={3} name="Neto" />
+                    <Bar dataKey="ingresos" fill={brand.caramel} name="Ingresos" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="costos" fill={brand.terracotta} name="Costos" radius={[4, 4, 0, 0]} />
+                    <Line type="monotone" dataKey="neto" stroke={brand.espresso} strokeWidth={3} name="Neto" />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -295,4 +284,3 @@ export function ReportsCharts() {
     </Card>
   );
 }
-

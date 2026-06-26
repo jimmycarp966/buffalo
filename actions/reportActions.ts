@@ -2,6 +2,27 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { checkUserPermission } from "./permissionActions";
+import { getBusinessDateString, getArgHour } from "@/lib/businessDay";
+
+// Devuelve el primer elemento si es array, o el objeto si es to-one (embeds de Supabase)
+const one = (x: any) => (Array.isArray(x) ? x[0] : x);
+
+// Trae TODAS las filas paginando, para no truncar agregaciones por el tope por
+// defecto de PostgREST (~1000 filas). buildQuery debe aplicar .range(from, to).
+async function fetchAllRows(buildQuery: (from: number, to: number) => any): Promise<any[]> {
+  const pageSize = 1000;
+  let from = 0;
+  const all: any[] = [];
+  for (let i = 0; i < 200; i++) {
+    const { data, error } = await buildQuery(from, from + pageSize - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
 
 // Verifica que haya sesión y permiso "reports.view" para leer reportes financieros
 async function ensureReportsAccess(
@@ -41,31 +62,32 @@ export async function getSalesStats(
       return { success: false, message: access.message, data: null };
     }
 
-    let query = supabase
-      .from("sales")
-      .select("total_amount, created_at")
-      .eq("status", "completed")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate);
+    const sales = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select("total_amount, created_at")
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
 
-    const { data: sales, error } = await query;
-
-    if (error) throw error;
-
-    const total_sales = sales?.reduce((sum, sale) => sum + sale.total_amount, 0) || 0;
-    const total_transactions = sales?.length || 0;
+    const total_sales = sales.reduce((sum, sale) => sum + (sale.total_amount || 0), 0);
+    const total_transactions = sales.length;
     const average_ticket = total_transactions > 0 ? total_sales / total_transactions : 0;
 
     // Unidades vendidas reales (suma de cantidades de ítems de ventas completadas)
-    const { data: itemsData } = await supabase
-      .from("sale_items")
-      .select("quantity, sales!inner(status, created_at)")
-      .eq("sales.status", "completed")
-      .gte("sales.created_at", startDate)
-      .lte("sales.created_at", endDate)
-      .limit(100000);
+    const itemsData = await fetchAllRows((from, to) =>
+      supabase
+        .from("sale_items")
+        .select("quantity, sales!inner(status, created_at)")
+        .eq("sales.status", "completed")
+        .gte("sales.created_at", startDate)
+        .lte("sales.created_at", endDate)
+        .range(from, to)
+    );
     const total_products =
-      itemsData?.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0) || 0;
+      itemsData.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0);
 
     return {
       success: true,
@@ -103,18 +125,19 @@ export async function getTopSellingProducts(startDate: string, endDate: string, 
     if (error) {
       console.warn("RPC get_top_selling_products no disponible, usando query directa:", error);
       // Fallback a query directa si la función RPC no existe
-      const fallbackQuery = await supabase
-        .from("sale_items")
-        .select("product_id, quantity, subtotal, products(name)")
-        .gte("sales.created_at", startDate)
-        .lte("sales.created_at", endDate)
-        .limit(1000);
-
-      if (fallbackQuery.error) throw fallbackQuery.error;
+      const fallbackData = await fetchAllRows((from, to) =>
+        supabase
+          .from("sale_items")
+          .select("product_id, quantity, subtotal, products(name), sales!inner(status, created_at)")
+          .eq("sales.status", "completed")
+          .gte("sales.created_at", startDate)
+          .lte("sales.created_at", endDate)
+          .range(from, to)
+      );
 
       // Agrupar por producto
       const productMap = new Map();
-      fallbackQuery.data?.forEach(item => {
+      fallbackData.forEach(item => {
         const key = item.product_id;
         if (productMap.has(key)) {
           const existing = productMap.get(key);
@@ -123,7 +146,7 @@ export async function getTopSellingProducts(startDate: string, endDate: string, 
         } else {
           productMap.set(key, {
             product_id: item.product_id,
-            product_name: item.products?.[0]?.name || "Producto desconocido",
+            product_name: one(item.products)?.name || "Producto desconocido",
             total_quantity: item.quantity,
             total_revenue: item.subtotal
           });
@@ -162,19 +185,20 @@ export async function getSalesByPaymentMethod(startDate: string, endDate: string
     if (error) {
       console.warn("RPC get_sales_by_payment_method no disponible, usando query directa:", error);
       // Fallback a query directa
-      const fallbackQuery = await supabase
-        .from("sale_payments")
-        .select("amount, payment_methods(name), sales!inner(created_at)")
-        .gte("sales.created_at", startDate)
-        .lte("sales.created_at", endDate)
-        .limit(1000);
-
-      if (fallbackQuery.error) throw fallbackQuery.error;
+      const fallbackData = await fetchAllRows((from, to) =>
+        supabase
+          .from("sale_payments")
+          .select("amount, payment_methods(name), sales!inner(status, created_at)")
+          .eq("sales.status", "completed")
+          .gte("sales.created_at", startDate)
+          .lte("sales.created_at", endDate)
+          .range(from, to)
+      );
 
       // Procesar datos del fallback
       const methodMap = new Map();
-      fallbackQuery.data?.forEach(payment => {
-        const methodName = payment.payment_methods?.[0]?.name || "Desconocido";
+      fallbackData.forEach(payment => {
+        const methodName = one(payment.payment_methods)?.name || "Desconocido";
         if (methodMap.has(methodName)) {
           const existing = methodMap.get(methodName);
           existing.total_amount += payment.amount;
@@ -223,22 +247,23 @@ export async function getSalesByCashRegister(startDate: string, endDate: string)
     if (error) {
       console.warn("RPC get_sales_by_cash_register no disponible, usando query directa:", error);
       // Fallback a query directa si la función RPC no existe
-      const fallbackQuery = await supabase
-        .from("sales")
-        .select(`
-          total_amount,
-          cash_register_sessions(area)
-        `)
-        .eq("status", "completed")
-        .gte("created_at", startDate)
-        .lte("created_at", endDate);
-
-      if (fallbackQuery.error) throw fallbackQuery.error;
+      const fallbackData = await fetchAllRows((from, to) =>
+        supabase
+          .from("sales")
+          .select(`
+            total_amount,
+            cash_register_sessions(area)
+          `)
+          .eq("status", "completed")
+          .gte("created_at", startDate)
+          .lte("created_at", endDate)
+          .range(from, to)
+      );
 
       // Procesar datos del fallback
       const areaMap = new Map();
-      fallbackQuery.data?.forEach(sale => {
-        const area = sale.cash_register_sessions?.[0]?.area || "bar";
+      fallbackData.forEach(sale => {
+        const area = one(sale.cash_register_sessions)?.area || "bar";
         const areaName = area === "bar" ? "BAR" : "OTRO";
 
         if (areaMap.has(area)) {
@@ -279,48 +304,71 @@ export async function getIncomeVsExpenses(startDate: string, endDate: string) {
       return { success: false, message: access.message, data: null };
     }
 
-    const { data: salesData, error: salesError } = await supabase
-      .from("sales")
-      .select("total_amount")
-      .eq("status", "completed")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate);
+    const salesData = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select("total_amount")
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
 
-    if (salesError) throw salesError;
-
-    const { data: expensesData, error: expensesError } = await supabase
-      .from("expenses")
-      .select("amount")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate);
-
-    if (expensesError) throw expensesError;
+    const expensesData = await fetchAllRows((from, to) =>
+      supabase
+        .from("expenses")
+        .select("amount")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
 
     // Compras del período (insumos/mercadería comprada a proveedores) — también
     // son un costo que debe descontarse del resultado, no solo los gastos de caja.
-    const { data: purchasesData, error: purchasesError } = await supabase
-      .from("purchases")
-      .select("total_amount")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate);
+    const purchasesData = await fetchAllRows((from, to) =>
+      supabase
+        .from("purchases")
+        .select("total_amount")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
 
-    if (purchasesError) throw purchasesError;
+    // Ventas a Cuenta Corriente del período: NO entraron a la caja todavía (crédito por cobrar).
+    // Hay que separarlas del "cobrado" para no inflar la plata disponible.
+    const ccData = await fetchAllRows((from, to) =>
+      supabase
+        .from("sale_payments")
+        .select("amount, payment_methods!inner(name), sales!inner(status, created_at)")
+        .ilike("payment_methods.name", "%cuenta corriente%")
+        .eq("sales.status", "completed")
+        .gte("sales.created_at", startDate)
+        .lte("sales.created_at", endDate)
+        .range(from, to)
+    );
 
-    const total_income = salesData?.reduce((sum, sale) => sum + sale.total_amount, 0) || 0;
-    const total_expenses = expensesData?.reduce((sum, expense) => sum + expense.amount, 0) || 0;
-    const total_purchases = purchasesData?.reduce((sum, p) => sum + (p.total_amount || 0), 0) || 0;
+    const total_income = salesData.reduce((sum, sale) => sum + (sale.total_amount || 0), 0);
+    const total_expenses = expensesData.reduce((sum, expense) => sum + (expense.amount || 0), 0);
+    const total_purchases = purchasesData.reduce((sum, p) => sum + (p.total_amount || 0), 0);
+    const cuenta_corriente = ccData.reduce((sum, p) => sum + (p.amount || 0), 0);
     const total_costs = total_expenses + total_purchases;
-    const net_profit = total_income - total_costs;
+    // Devengado: ventas facturadas (incluye crédito). Cobrado: lo que efectivamente entró (sin crédito CC).
+    const collected_income = Math.max(0, total_income - cuenta_corriente);
+    const net_profit = total_income - total_costs;            // resultado devengado
+    const net_cash = collected_income - total_costs;          // resultado de caja (cobrado)
     const profit_margin = total_income > 0 ? (net_profit / total_income) * 100 : 0;
 
     return {
       success: true,
       data: {
         total_income,
+        collected_income,
+        cuenta_corriente,
         total_expenses,
         total_purchases,
         total_costs,
         net_profit,
+        net_cash,
         profit_margin
       }
     };
@@ -339,28 +387,32 @@ export async function getDailySales(startDate: string, endDate: string) {
       return { success: false, message: access.message, data: [] };
     }
 
-    const { data, error } = await supabase
-      .from("sales")
-      .select("total_amount, created_at")
-      .eq("status", "completed")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate)
-      .order("created_at", { ascending: true });
-
-    if (error) throw error;
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select("total_amount, created_at")
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    );
 
     const dayMap = new Map();
-    data?.forEach(sale => {
+    data.forEach(sale => {
       try {
-        const date = new Date(sale.created_at).toISOString().split('T')[0];
+        // Agrupar por DÍA DE NEGOCIO en hora Argentina (no por día UTC).
+        const date = getBusinessDateString(new Date(sale.created_at));
         if (dayMap.has(date)) {
           const existing = dayMap.get(date);
           existing.sales += sale.total_amount;
+          existing.amount += sale.total_amount;
           existing.transactions += 1;
         } else {
           dayMap.set(date, {
             date,
             sales: sale.total_amount,
+            amount: sale.total_amount,
             transactions: 1
           });
         }
@@ -453,22 +505,22 @@ export async function getSalesByEmployee(startDate: string, endDate: string) {
       return { success: false, message: access.message, data: [] };
     }
 
-    const { data, error } = await supabase
-      .from("sales")
-      .select(`
-        total_amount,
-        user_id,
-        users!sales_user_id_fkey(name)
-      `)
-      .eq("status", "completed")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate)
-      .limit(100);
-
-    if (error) throw error;
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select(`
+          total_amount,
+          user_id,
+          users!sales_user_id_fkey(name)
+        `)
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
 
     const employeeMap = new Map();
-    data?.forEach(sale => {
+    data.forEach(sale => {
       const userId = sale.user_id;
       if (employeeMap.has(userId)) {
         const existing = employeeMap.get(userId);
@@ -477,7 +529,7 @@ export async function getSalesByEmployee(startDate: string, endDate: string) {
       } else {
         employeeMap.set(userId, {
           employee_id: userId,
-          employee_name: (Array.isArray(sale.users) ? sale.users[0]?.name : (sale.users as any)?.name) || "Sin nombre",
+          employee_name: one(sale.users)?.name || "Sin nombre",
           total_sales: sale.total_amount,
           transaction_count: 1,
           areas_worked: ["BAR"]
@@ -506,28 +558,33 @@ export async function getProfitabilityReport(startDate: string, endDate: string)
       return { success: false, message: access.message, data: [] };
     }
 
-    const { data, error } = await supabase
-      .from("sale_items")
-      .select("product_id, quantity, subtotal, products(name, cost_price)")
-      .limit(100);
-
-    if (error) throw error;
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sale_items")
+        .select("product_id, quantity, subtotal, products(name, cost_price), sales!inner(status, created_at)")
+        .eq("sales.status", "completed")
+        .gte("sales.created_at", startDate)
+        .lte("sales.created_at", endDate)
+        .range(from, to)
+    );
 
     const productMap = new Map();
-    data?.forEach(item => {
+    data.forEach(item => {
       const key = item.product_id;
+      const prod = one(item.products);
+      const lineCost = (prod?.cost_price || 0) * item.quantity;
       if (productMap.has(key)) {
         const existing = productMap.get(key);
         existing.units_sold += item.quantity;
         existing.total_revenue += item.subtotal;
-        existing.total_cost += (item.products?.[0]?.cost_price || 0) * item.quantity;
+        existing.total_cost += lineCost;
       } else {
         productMap.set(key, {
           product_id: item.product_id,
-          product_name: item.products?.[0]?.name || "Producto desconocido",
+          product_name: prod?.name || "Producto desconocido",
           units_sold: item.quantity,
           total_revenue: item.subtotal,
-          total_cost: (item.products?.[0]?.cost_price || 0) * item.quantity
+          total_cost: lineCost
         });
       }
     });
@@ -559,18 +616,20 @@ export async function getHourlySalesDistribution(startDate: string, endDate: str
       return { success: false, message: access.message, data: [] };
     }
 
-    const { data, error } = await supabase
-      .from("sales")
-      .select("total_amount, created_at")
-      .eq("status", "completed")
-      .gte("created_at", startDate)
-      .lte("created_at", endDate);
-
-    if (error) throw error;
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select("total_amount, created_at")
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
 
     const hourMap = new Map();
-    data?.forEach(sale => {
-      const hour = new Date(sale.created_at).getHours();
+    data.forEach(sale => {
+      // Hora REAL en zona Argentina (no la hora UTC del servidor de Vercel).
+      const hour = getArgHour(new Date(sale.created_at));
       if (hourMap.has(hour)) {
         const existing = hourMap.get(hour);
         existing.total_sales += sale.total_amount;
@@ -609,39 +668,52 @@ export async function getCategoryPerformance(startDate: string, endDate: string)
       return { success: false, message: access.message, data: [] };
     }
 
-    const { data, error } = await supabase
-      .from("sale_items")
-      .select("quantity, subtotal, products(category_id, categories(name))")
-      .limit(100);
-
-    if (error) throw error;
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sale_items")
+        .select("product_id, quantity, subtotal, products(category_id, cost_price, categories(name)), sales!inner(status, created_at)")
+        .eq("sales.status", "completed")
+        .gte("sales.created_at", startDate)
+        .lte("sales.created_at", endDate)
+        .range(from, to)
+    );
 
     const categoryMap = new Map();
-    data?.forEach(item => {
-      const categoryId = item.products?.[0]?.category_id;
-      if (categoryId) {
-        if (categoryMap.has(categoryId)) {
-          const existing = categoryMap.get(categoryId);
-          existing.units_sold += item.quantity;
-          existing.total_revenue += item.subtotal;
-          existing.product_count += 1;
-        } else {
-          categoryMap.set(categoryId, {
-            category_id: categoryId,
-            category_name: item.products?.[0]?.categories?.[0]?.name || "Categoría desconocida",
-            units_sold: item.quantity,
-            total_revenue: item.subtotal,
-            product_count: 1
-          });
-        }
+    const productsByCat = new Map<string, Set<string>>();
+    data.forEach(item => {
+      const prod = one(item.products);
+      const categoryId = prod?.category_id;
+      if (!categoryId) return;
+      const lineCost = (prod?.cost_price || 0) * item.quantity;
+      const set = productsByCat.get(categoryId) || new Set<string>();
+      if (item.product_id) set.add(item.product_id);
+      productsByCat.set(categoryId, set);
+      if (categoryMap.has(categoryId)) {
+        const existing = categoryMap.get(categoryId);
+        existing.units_sold += item.quantity;
+        existing.total_revenue += item.subtotal;
+        existing.total_cost += lineCost;
+      } else {
+        categoryMap.set(categoryId, {
+          category_id: categoryId,
+          category_name: one(prod?.categories)?.name || "Categoría desconocida",
+          units_sold: item.quantity,
+          total_revenue: item.subtotal,
+          total_cost: lineCost
+        });
       }
     });
 
-    const result = Array.from(categoryMap.values()).map(category => ({
-      ...category,
-      avg_price: category.units_sold > 0 ? category.total_revenue / category.units_sold : 0,
-      margin_percentage: 25.0
-    }));
+    const result = Array.from(categoryMap.values()).map(category => {
+      const gross_profit = category.total_revenue - category.total_cost;
+      return {
+        ...category,
+        product_count: productsByCat.get(category.category_id)?.size || 0,
+        avg_price: category.units_sold > 0 ? category.total_revenue / category.units_sold : 0,
+        gross_profit,
+        margin_percentage: category.total_revenue > 0 ? (gross_profit / category.total_revenue) * 100 : 0
+      };
+    });
 
     return { success: true, data: result };
   } catch (error: any) {
@@ -684,8 +756,9 @@ export async function getSalesComparison(periodType: 'daily' | 'weekly' | 'month
     if (currentError) throw currentError;
 
     const previousStart = new Date(start);
-    const previousEnd = new Date(start);
-    
+    // El período anterior termina 1ms antes del inicio del actual (sin solapar el límite).
+    const previousEnd = new Date(start.getTime() - 1);
+
     switch (periodType) {
       case 'daily':
         previousStart.setDate(previousStart.getDate() - 1);

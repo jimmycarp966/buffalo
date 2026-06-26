@@ -29,8 +29,19 @@ import {
   getSalesComparison
 } from "@/actions/reportActions";
 import { formatCurrency } from "@/lib/utils";
+import { getBusinessDateString, argDayToUtcRange } from "@/lib/businessDay";
 import { ReportsCharts, ExportButtons } from "./LazyComponents";
 import { ReportFilters, type ReportFilters as ReportFiltersType } from "./ReportFilters";
+
+// Formatea un "YYYY-MM-DD" a texto legible en es-AR sin corrimiento de zona
+const fmtDayLabel = (dateStr: string) => {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("es-AR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
 
 interface ReportData {
   stats: any;
@@ -45,16 +56,15 @@ interface ReportData {
 }
 
 export function ReportsContent() {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+  // Mes en curso en hora Argentina (no UTC): del día 1 hasta hoy
+  const todayArg = getBusinessDateString();
+  const startOfMonth = `${todayArg.slice(0, 7)}-01`;
+  const endOfMonth = todayArg;
 
   const [filters, setFilters] = useState<ReportFiltersType>({
     startDate: startOfMonth,
     endDate: endOfMonth,
     cashRegister: "all",
-    employee: "all",
-    category: "all",
     compareWithPrevious: false,
   });
 
@@ -78,8 +88,11 @@ export function ReportsContent() {
   const loadReports = async () => {
     setIsLoading(true);
     try {
-      const startDateISO = new Date(filters.startDate).toISOString();
-      const endDateISO = new Date(filters.endDate + "T23:59:59").toISOString();
+      // Rango anclado a hora Argentina (00:00 a 23:59:59 ARG), no a UTC
+      const { startISO: startDateISO, endISO: endDateISO } = argDayToUtcRange(
+        filters.startDate,
+        filters.endDate
+      );
 
       // Llamadas secuenciales para mayor robustez
       const stats = await getSalesStats(
@@ -145,8 +158,20 @@ export function ReportsContent() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-febrero-caramel" />
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Reportes</h1>
+          <p className="text-muted-foreground">
+            Período: {fmtDayLabel(filters.startDate)} – {fmtDayLabel(filters.endDate)} · hora Argentina
+          </p>
+        </div>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-28 animate-pulse rounded-xl border border-border bg-muted/40" />
+          ))}
+        </div>
+        <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin text-febrero-caramel" />
+          <span className="text-sm">Cargando reportes del período…</span>
         </div>
       </div>
     );
@@ -156,9 +181,13 @@ export function ReportsContent() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Reportes Avanzados</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Reportes</h1>
           <p className="text-muted-foreground">
-            Analisis completo y estadisticas del negocio
+            Período:{" "}
+            <span className="font-medium text-foreground">
+              {fmtDayLabel(filters.startDate)} – {fmtDayLabel(filters.endDate)}
+            </span>{" "}
+            · hora Argentina
           </p>
         </div>
         <ExportButtons
@@ -261,8 +290,12 @@ export function ReportsContent() {
             </Card>
           </div>
 
-        {/* Graficos principales */}
-          <ReportsCharts />
+        {/* Graficos principales (respetan el filtro de período) */}
+          <ReportsCharts
+            startDate={filters.startDate}
+            endDate={filters.endDate}
+            cashRegister={filters.cashRegister}
+          />
         </TabsContent>
 
         {/* TAB 2: ANALISIS DE PRODUCTOS */}
@@ -473,12 +506,23 @@ export function ReportsContent() {
                     <div className="flex items-center justify-between p-3 rounded-lg bg-green-500/10 border border-green-500/20">
                       <div>
                         <p className="font-medium text-green-700">Ingresos</p>
-                        <p className="text-sm text-green-600">Ventas totales</p>
+                        <p className="text-sm text-green-600">Ventas totales (incluye crédito)</p>
                       </div>
                       <p className="text-2xl font-bold text-green-700">
                         {formatCurrency(parseFloat(reportData.incomeExpenses.total_income || "0"))}
                       </p>
                     </div>
+                    {(reportData.incomeExpenses.cuenta_corriente || 0) > 0 && (
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                        <div>
+                          <p className="font-medium text-emerald-700">Cobrado en caja</p>
+                          <p className="text-sm text-emerald-600">Ingresos sin la deuda en cuenta corriente</p>
+                        </div>
+                        <p className="text-2xl font-bold text-emerald-700">
+                          {formatCurrency(reportData.incomeExpenses.collected_income || 0)}
+                        </p>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between p-3 rounded-lg bg-red-500/10 border border-red-500/20">
                       <div>
                         <p className="font-medium text-red-700">Gastos</p>
@@ -497,6 +541,17 @@ export function ReportsContent() {
                         {formatCurrency(parseFloat(reportData.incomeExpenses.total_purchases || "0"))}
                       </p>
                     </div>
+                    {(reportData.incomeExpenses.cuenta_corriente || 0) > 0 && (
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                        <div>
+                          <p className="font-medium text-amber-700">Por cobrar (Cuenta Corriente)</p>
+                          <p className="text-sm text-amber-600">Ventas a crédito, todavía no entraron a la caja</p>
+                        </div>
+                        <p className="text-2xl font-bold text-amber-700">
+                          {formatCurrency(reportData.incomeExpenses.cuenta_corriente || 0)}
+                        </p>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
                       <div>
                         <p className="font-medium text-blue-700">Margen Neto</p>

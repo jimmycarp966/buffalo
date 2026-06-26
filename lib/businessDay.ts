@@ -73,5 +73,32 @@ export const formatBusinessRange = (start: Date, end: Date) => {
   return `${rangeFormatter.format(start)} ➝ ${rangeFormatter.format(end)} (hora Buenos Aires)`;
 };
 
+// Hora del día (0-23) en zona Argentina, para agrupar ventas por hora real
+const argHourFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: ARG_TIMEZONE,
+  hour: "2-digit",
+  hour12: false,
+});
+export const getArgHour = (date: Date) => Number(argHourFormatter.format(date)) % 24;
+
+// Día de la semana en zona Argentina: 0=Domingo … 6=Sábado
+const argWeekdayFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: ARG_TIMEZONE,
+  weekday: "short",
+});
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+};
+export const getArgWeekday = (date: Date) =>
+  WEEKDAY_INDEX[argWeekdayFormatter.format(date)] ?? 0;
+
+// Convierte un YYYY-MM-DD (día ARG) a los límites UTC ISO para filtrar created_at.
+// Cubre exactamente 00:00:00 a 23:59:59.999 hora Argentina (UTC-3).
+export const argDayToUtcRange = (startDateStr: string, endDateStr: string) => {
+  const startISO = new Date(`${startDateStr}T00:00:00.000-03:00`).toISOString();
+  const endISO = new Date(`${endDateStr}T23:59:59.999-03:00`).toISOString();
+  return { startISO, endISO };
+};
+
 export { ARG_TIMEZONE };
 
