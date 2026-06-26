@@ -2302,7 +2302,8 @@ INSERT INTO public.permissions (name, description, module, action) VALUES
   ('expenses.create','Create expenses','expenses','create'),
   ('expenses.edit','Edit expenses','expenses','edit'),
   ('expenses.delete','Delete expenses','expenses','delete'),
-  ('config.view','View configuration','config','view')
+  ('config.view','View configuration','config','view'),
+  ('customers.manage','Gestionar clientes y cuenta corriente','customers','manage')
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO public.role_permissions (role, permission_id, granted)

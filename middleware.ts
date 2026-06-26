@@ -20,6 +20,8 @@ const routePermissions: PermissionRule[] = [
   { pattern: /^\/compras(?:\/|$)/, permissions: ["suppliers.view"] },
   { pattern: /^\/configuracion(?:\/|$)/, permissions: ["config.view"] },
   { pattern: /^\/usuarios(?:\/|$)/, permissions: ["users.view"] },
+  { pattern: /^\/caja-historial(?:\/|$)/, permissions: ["cash.view"] },
+  { pattern: /^\/clientes(?:\/|$)/, permissions: ["customers.manage"] },
 ];
 
 async function hasRequiredPermissions(
@@ -173,5 +175,7 @@ export const config = {
     "/compras/:path*",
     "/configuracion/:path*",
     "/usuarios/:path*",
+    "/caja-historial/:path*",
+    "/clientes/:path*",
   ],
 };

@@ -19,6 +19,8 @@ import {
   Users,
   Settings,
   ChevronDown,
+  History,
+  UserCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -77,6 +79,8 @@ const moreNavigation = [
   { name: "Proveedores", href: "/proveedores", icon: Truck, roles: ["admin", "supervisor"] },
   { name: "Compras", href: "/compras", icon: ShoppingBag, roles: ["admin", "supervisor"] },
   { name: "Promociones", href: "/promociones", icon: Tag, roles: ["admin", "supervisor"] },
+  { name: "Clientes", href: "/clientes", icon: UserCircle, roles: ["admin", "supervisor"] },
+  { name: "Historial Caja", href: "/caja-historial", icon: History, roles: ["admin", "supervisor"] },
   { name: "Usuarios", href: "/usuarios", icon: Users, roles: ["admin"] },
   { name: "Configuración", href: "/configuracion", icon: Settings, roles: ["admin"] },
 ];
