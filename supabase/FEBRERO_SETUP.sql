@@ -2486,6 +2486,12 @@ CREATE POLICY "staff_manage_product_ingredients" ON public.product_ingredients F
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.ingredients TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_ingredients TO authenticated;
 
+-- "Rinde": insumos que se compran enteros pero se usan por porción (ej: pan de campo → 10 rodajas).
+-- Cuando yield_units > 0, el costo por porción (columna cost) se deriva = purchase_price / yield_units
+-- y la unidad pasa a ser 'unidad' (la porción). Así el recálculo es automático al cambiar el precio.
+ALTER TABLE public.ingredients ADD COLUMN IF NOT EXISTS purchase_price numeric;
+ALTER TABLE public.ingredients ADD COLUMN IF NOT EXISTS yield_units numeric;
+
 -- Compras: además de productos de la carta, permitir comprar insumos o ítems libres
 ALTER TABLE public.purchase_items ALTER COLUMN product_id DROP NOT NULL;
 ALTER TABLE public.purchase_items ADD COLUMN IF NOT EXISTS ingredient_id uuid REFERENCES public.ingredients(id) ON DELETE SET NULL;

@@ -79,12 +79,23 @@ export function IngredientsTable() {
               </tr>
             </thead>
             <tbody>
-              {ingredients.map((ing) => (
+              {ingredients.map((ing) => {
+                const hasYield = Number(ing.yield_units) > 0;
+                return (
                 <tr key={ing.id} className="border-t border-border">
                   <td className="px-4 py-2.5 font-medium text-foreground">{ing.name}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">{purchaseUnitLabel(ing.unit)}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground">
+                    {hasYield ? `porción (rinde ${Number(ing.yield_units)})` : purchaseUnitLabel(ing.unit)}
+                  </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
-                    {formatCurrency(ing.cost)} <span className="text-muted-foreground">/ {purchaseUnitLabel(ing.unit)}</span>
+                    {hasYield ? (
+                      <>
+                        {formatCurrency(ing.cost)} <span className="text-muted-foreground">/ porción</span>
+                        <div className="text-xs text-muted-foreground">entero {formatCurrency(Number(ing.purchase_price) || 0)}</div>
+                      </>
+                    ) : (
+                      <>{formatCurrency(ing.cost)} <span className="text-muted-foreground">/ {purchaseUnitLabel(ing.unit)}</span></>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex justify-end gap-1">
@@ -97,7 +108,8 @@ export function IngredientsTable() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
