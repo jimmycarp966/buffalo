@@ -13,7 +13,10 @@ import { CloseTableModal } from "./CloseTableModal";
 import { ChangeMesaModal } from "./ChangeMesaModal";
 import { JoinMesasModal } from "./JoinMesasModal";
 import { TableSelectorView } from "./TableSelectorView";
-import { getTableRemainingBalance, reduceItemQuantity, removeItemFromTable, cancelTable, clearAccountPrinted, closeTable, getTablePartialPayments } from "@/actions/barActions";
+import { getTableRemainingBalance, reduceItemQuantity, removeItemFromTable, cancelTable, clearAccountPrinted, closeTable, getTablePartialPayments, setSaleCustomer } from "@/actions/barActions";
+import { getCustomers } from "@/actions/customerActions";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { UserCircle } from "lucide-react";
 import { PrintAccountTicket } from "./PrintAccountTicket";
 import { EditCustomerDataModal } from "./EditCustomerDataModal";
 import {
@@ -55,6 +58,34 @@ export function SelectedTableDetail({ table, onClose, onUpdate }: SelectedTableD
     table.remaining_amount ?? table.total_amount - (table.paid_amount ?? computedPaidFromPayments)
   );
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [assigningCustomer, setAssigningCustomer] = useState(false);
+  const NONE_CUSTOMER = "__none__";
+
+  useEffect(() => {
+    if (table.sale_type === "table") {
+      getCustomers().then((res) => {
+        if (res.success) setCustomers(res.data || []);
+      });
+    }
+  }, [table.sale_type]);
+
+  const handleAssignCustomer = async (value: string) => {
+    if (table.id.startsWith("temp-")) {
+      addNotification("info", "Espere a que la mesa se sincronice");
+      return;
+    }
+    const customerId = value === NONE_CUSTOMER ? null : value;
+    setAssigningCustomer(true);
+    const res = await setSaleCustomer(table.id, customerId);
+    if (res.success) {
+      addNotification("success", customerId ? "Cliente asignado a la mesa" : "Cliente quitado");
+      onUpdate();
+    } else {
+      addNotification("error", res.message || "Error al asignar el cliente");
+    }
+    setAssigningCustomer(false);
+  };
 
   useEffect(() => {
     const nextPaid = table.paid_amount ?? computedPaidFromPayments;
@@ -417,6 +448,34 @@ export function SelectedTableDetail({ table, onClose, onUpdate }: SelectedTableD
               </>
             )}
           </div>
+
+          {/* Cliente / cuenta corriente (solo mesas) */}
+          {table.sale_type === 'table' && table.status === 'pending' && (
+            <div className="space-y-1.5 rounded-2xl border border-border bg-muted/30 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <UserCircle className="h-4 w-4 text-secondary" />
+                <span>Cliente (cuenta corriente)</span>
+              </div>
+              <Select
+                value={table.customer_id || NONE_CUSTOMER}
+                onValueChange={handleAssignCustomer}
+                disabled={assigningCustomer || table.id.startsWith('temp-')}
+              >
+                <SelectTrigger className="h-10 rounded-xl">
+                  <SelectValue placeholder="Sin asignar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE_CUSTOMER}>Sin asignar</SelectItem>
+                  {customers.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Opcional. Si asignás un cliente, al cerrar la mesa vas a poder cobrarla a su cuenta corriente.
+              </p>
+            </div>
+          )}
 
           {/* Lista de productos */}
           <div className="space-y-6">

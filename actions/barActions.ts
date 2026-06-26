@@ -5,6 +5,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { getErrorMessage } from "@/lib/types";
 import { checkUserPermission } from "./permissionActions";
+import { chargeSaleToCustomer } from "./customerActions";
 import {
   getMissingSalePayments,
   normalizeItemsWithProductCatalog,
@@ -307,6 +308,7 @@ const SALES_SELECT_BASE = `
   table_number,
   sale_type,
   kitchen_ready,
+  customer_id,
   customer_name,
   customer_phone,
   delivery_address,
@@ -1699,6 +1701,111 @@ export async function closeTable(saleId: string, paymentItems: Array<{ paymentMe
       success: false,
       message: getErrorMessage(error) || "Error al cerrar mesa",
     };
+  }
+}
+
+/**
+ * Asigna (o quita) un cliente de cuenta corriente a una mesa/venta abierta.
+ * Solo escribe sales.customer_id; la RLS staff_manage_sales restringe a staff activo.
+ * Pasar customerId = null para desasignar.
+ */
+export async function setSaleCustomer(saleId: string, customerId: string | null) {
+  try {
+    if (!saleId || saleId.startsWith("temp-") || saleId.length < 36) {
+      return { success: false, message: "La mesa se está sincronizando... reintentá en un instante." };
+    }
+
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, message: "No autenticado" };
+
+    const { error } = await supabase
+      .from("sales")
+      .update({ customer_id: customerId })
+      .eq("id", saleId);
+
+    if (error) throw error;
+
+    revalidatePath("/caja-bar");
+    return { success: true };
+  } catch (error: unknown) {
+    console.error("❌ ERROR setSaleCustomer:", error);
+    return { success: false, message: getErrorMessage(error) || "Error al asignar el cliente" };
+  }
+}
+
+/**
+ * Cierra una mesa cobrando el saldo restante a la CUENTA CORRIENTE de un cliente.
+ * - Registra el cobro con el método de pago "Cuenta Corriente" (no-efectivo) reutilizando
+ *   closeTable, por lo que NO entra al efectivo de la caja del día (el arqueo solo cuenta efectivo).
+ * - Suma la deuda al cliente (customer_credit_movements + customers.current_balance).
+ * - Deja la venta vinculada al cliente (sales.customer_id).
+ * El límite de crédito se avisa en el frontend pero no bloquea (decisión: "avisa pero deja seguir").
+ */
+export async function closeTableOnAccount(saleId: string, customerId: string) {
+  try {
+    if (!saleId || saleId.startsWith("temp-") || saleId.length < 36) {
+      return { success: false, message: "La mesa se está sincronizando... reintentá en un instante." };
+    }
+    if (!customerId) {
+      return { success: false, message: "Elegí un cliente para la cuenta corriente." };
+    }
+
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, message: "No autenticado" };
+
+    // Verificar la venta (debe estar pendiente)
+    const { data: sale, error: saleError } = await supabase
+      .from("sales")
+      .select("id, total_amount, status")
+      .eq("id", saleId)
+      .single();
+    if (saleError) throw saleError;
+    if (!sale) return { success: false, message: "Venta no encontrada" };
+    if (sale.status !== "pending") return { success: false, message: "La venta no está pendiente" };
+
+    // Saldo restante (considerando pagos parciales ya cobrados en efectivo/otros)
+    let remaining = Number(sale.total_amount) || 0;
+    const balanceResult = await getTableRemainingBalance(saleId);
+    if (balanceResult.success && balanceResult.data) {
+      remaining = Number(balanceResult.data.remainingBalance) || 0;
+    }
+    remaining = Math.max(0, Math.round(remaining * 100) / 100);
+
+    if (remaining <= 0) {
+      return { success: false, message: "La mesa no tiene saldo para cargar a cuenta corriente." };
+    }
+
+    // Buscar el método de pago "Cuenta Corriente" (no-efectivo → el arqueo lo excluye)
+    const { data: ccMethod } = await supabase
+      .from("payment_methods")
+      .select("id")
+      .ilike("name", "%cuenta corriente%")
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!ccMethod) {
+      return {
+        success: false,
+        message: 'Falta el método de pago "Cuenta Corriente". Corré la actualización de la base de datos.',
+      };
+    }
+
+    // Cerrar la mesa registrando el cobro como Cuenta Corriente (reutiliza toda la lógica de cierre)
+    const closeRes = await closeTable(saleId, [{ paymentMethodId: ccMethod.id, amount: remaining }]);
+    if (!closeRes.success) return closeRes;
+
+    // Vincular la venta al cliente y sumar la deuda a su cuenta corriente
+    await supabase.from("sales").update({ customer_id: customerId }).eq("id", saleId);
+    const chargeRes = await chargeSaleToCustomer(customerId, remaining, saleId, "Consumo en mesa");
+
+    revalidatePath("/caja-bar");
+    revalidatePath("/clientes");
+    return { success: true, data: { charged: remaining, newBalance: chargeRes?.data?.newBalance } };
+  } catch (error: unknown) {
+    console.error("❌ ERROR closeTableOnAccount:", error);
+    return { success: false, message: getErrorMessage(error) || "Error al cobrar a cuenta corriente" };
   }
 }
 

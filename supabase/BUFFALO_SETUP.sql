@@ -1094,7 +1094,8 @@ INSERT INTO cash_registers (name, type, is_active) VALUES ('CAJA BAR', 'bar', tr
 INSERT INTO payment_methods (id, name, is_active) VALUES
   ('550e8400-e29b-41d4-a716-446655440000', 'Efectivo', true),
   ('550e8400-e29b-41d4-a716-446655440001', 'Transferencia', true),
-  ('550e8400-e29b-41d4-a716-446655440004', 'QR', true)
+  ('550e8400-e29b-41d4-a716-446655440004', 'QR', true),
+  ('550e8400-e29b-41d4-a716-446655440005', 'Cuenta Corriente', true)
 ON CONFLICT (id) DO NOTHING;
 INSERT INTO store_settings (store_name, estimated_delivery_time)
   SELECT 'Buffalo Coffee & Food', 30 WHERE NOT EXISTS (SELECT 1 FROM store_settings);
@@ -2247,7 +2248,8 @@ INSERT INTO public.payment_methods (id, name, is_active) VALUES
   ('550e8400-e29b-41d4-a716-446655440001', 'Transferencia', TRUE),
   ('550e8400-e29b-41d4-a716-446655440002', 'Debito', TRUE),
   ('550e8400-e29b-41d4-a716-446655440003', 'Credito', TRUE),
-  ('550e8400-e29b-41d4-a716-446655440004', 'QR', TRUE)
+  ('550e8400-e29b-41d4-a716-446655440004', 'QR', TRUE),
+  ('550e8400-e29b-41d4-a716-446655440005', 'Cuenta Corriente', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.store_settings (store_name, estimated_delivery_time)

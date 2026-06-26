@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { formatCurrency } from "@/lib/utils";
-import { DollarSign, CreditCard, Banknote, Smartphone, Loader2, X, Plus, FileText } from "lucide-react";
-import { closeTable, getTableRemainingBalance, getTablePartialPayments } from "@/actions/barActions";
+import { DollarSign, CreditCard, Banknote, Smartphone, Loader2, X, Plus, FileText, Wallet } from "lucide-react";
+import { closeTable, closeTableOnAccount, getTableRemainingBalance, getTablePartialPayments } from "@/actions/barActions";
 import { completeCounter, completeDelivery } from "@/actions/saleActions";
+import { getCustomers } from "@/actions/customerActions";
 import { useNotificationStore } from "@/store/notificationStore";
 import { getPaymentMethods } from "@/actions/saleActions";
 import { generateInvoice } from "@/actions/invoiceActions";
@@ -48,6 +49,7 @@ interface CloseTableModalProps {
     sale_type?: "table" | "counter" | "delivery";
     kitchen_ready?: boolean;
     total_amount: number;
+    customer_id?: string | null;
     customer_name?: string | null;
     delivery_address?: string | null;
     sale_items: Array<{
@@ -93,6 +95,11 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [closedSaleId, setClosedSaleId] = useState<string | null>(null);
   const [selectedItemsTotal, setSelectedItemsTotal] = useState<number>(0);
+  // Cuenta corriente (solo para mesas): cobrar el saldo a la cuenta de un cliente
+  const [ccMode, setCcMode] = useState<boolean>(false);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+  const isTable = table.sale_type === "table" || !table.sale_type;
   const addNotification = useNotificationStore((state) => state.addNotification);
   const queryClient = useQueryClient();
 
@@ -124,11 +131,14 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
             "Transferencia": <Smartphone className="h-4 w-4" />,
           };
 
-          const methods = result.data.map((method: any) => ({
-            id: method.id,
-            name: method.name,
-            icon: paymentMethodIcons[method.name] || <DollarSign className="h-4 w-4" />
-          }));
+          const methods = result.data
+            // "Cuenta Corriente" no es un método de cobro normal: se usa con el botón dedicado
+            .filter((method: any) => !String(method.name).toLowerCase().includes("cuenta corriente"))
+            .map((method: any) => ({
+              id: method.id,
+              name: method.name,
+              icon: paymentMethodIcons[method.name] || <DollarSign className="h-4 w-4" />
+            }));
 
           cachedPaymentMethods = methods;
           setPaymentMethods(methods);
@@ -199,7 +209,14 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
       setSelectedItemsTotal(0);
       setDiscountPercent(0);
       setAdjustmentType('discount');
+      setCcMode(false);
+      setSelectedCustomerId(table.customer_id || "");
       loadPaymentMethods();
+      if (isTable) {
+        getCustomers().then((res) => {
+          if (res.success) setCustomers(res.data || []);
+        });
+      }
     }
   }, [open]);
 
@@ -294,7 +311,13 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
 
     const isFullyPaid = isWithinTolerance(effectiveTotal);
 
-    if (!isFullyPaid) {
+    // Cobro a cuenta corriente: el saldo completo va a la cuenta del cliente (no toca la caja)
+    if (ccMode) {
+      if (!selectedCustomerId) {
+        addNotification("error", "Elegí un cliente para la cuenta corriente");
+        return;
+      }
+    } else if (!isFullyPaid) {
       if (paymentItems.length === 0) {
         addNotification("error", "Debes seleccionar al menos un método de pago");
         return;
@@ -318,7 +341,9 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
       let result;
 
       // Usar la función apropiada según el tipo de venta
-      if (table.sale_type === 'counter') {
+      if (ccMode) {
+        result = await closeTableOnAccount(table.id, selectedCustomerId);
+      } else if (table.sale_type === 'counter') {
         const payments = paymentItems.map(item => ({
           payment_method_id: item.paymentMethodId,
           amount: item.amount,
@@ -429,10 +454,12 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
           }))
           : [];
 
-        const currentPayments = paymentItems.map((payment: PaymentItem) => ({
-          payment_method_name: payment.paymentMethodName,
-          amount: payment.amount,
-        }));
+        const currentPayments = ccMode
+          ? [{ payment_method_name: "Cuenta Corriente", amount: remainingBalance }]
+          : paymentItems.map((payment: PaymentItem) => ({
+            payment_method_name: payment.paymentMethodName,
+            amount: payment.amount,
+          }));
 
         const ticketPayments = [...partialPayments, ...currentPayments];
 
@@ -454,7 +481,7 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
         setShowTicket(true);
         addNotification("success", `Mesa ${table.table_number} cerrada exitosamente`);
       } else {
-        addNotification("error", result.message || "Error al cerrar mesa");
+        addNotification("error", ("message" in result ? result.message : undefined) || "Error al cerrar mesa");
       }
     } catch (error) {
       console.error("Error:", error);
@@ -462,7 +489,7 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
     } finally {
       setIsLoading(false);
     }
-  }, [table, remainingBalance, effectiveTotal, discountAmount, surchargeAmount, discountPercent, paymentItems, paymentMethods, getTotalPaymentAmount, addNotification, queryClient]);
+  }, [table, remainingBalance, effectiveTotal, discountAmount, surchargeAmount, discountPercent, paymentItems, paymentMethods, getTotalPaymentAmount, addNotification, queryClient, ccMode, selectedCustomerId]);
 
   const addPaymentMethod = () => {
     const method = paymentMethods[0];
@@ -517,7 +544,18 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
   // 3. NO debe haber faltante
   const isPaymentSufficient = isWithinTolerance(effectiveTotal) ||
     (paymentItems.length > 0 && totalPaymentAmount >= effectiveTotal - PAYMENT_TOLERANCE);
-  const disableSubmit = (!isPaymentSufficient) || hasShortage || isLoading || loadingBalance || table.id.startsWith('temp-');
+
+  // Cuenta corriente: se carga el saldo completo de la mesa (sin descuento/recargo)
+  const selectedCustomer = customers.find((c) => c.id === selectedCustomerId) || null;
+  const ccSaldo = Number(selectedCustomer?.current_balance) || 0;
+  const ccLimite = Number(selectedCustomer?.credit_limit) || 0;
+  const ccChargeAmount = remainingBalance;
+  const ccNuevoSaldo = ccSaldo + ccChargeAmount;
+  const ccExcedeLimite = ccLimite > 0 && ccNuevoSaldo > ccLimite + PAYMENT_TOLERANCE;
+
+  const disableSubmit = ccMode
+    ? (!selectedCustomerId || ccChargeAmount <= 0 || isLoading || loadingBalance || table.id.startsWith('temp-'))
+    : ((!isPaymentSufficient) || hasShortage || isLoading || loadingBalance || table.id.startsWith('temp-'));
 
   return (
     <>
@@ -666,6 +704,83 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
             <div className="w-full md:w-[55%] px-4 sm:px-6 py-4 sm:py-5 bg-muted/30 flex flex-col">
               <h3 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wide">Formas de Pago</h3>
 
+              {/* Selector: pago normal vs cuenta corriente (solo mesas) */}
+              {isTable && (
+                <div className="grid grid-cols-2 gap-1 mb-3">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={!ccMode ? "default" : "outline"}
+                    onClick={() => setCcMode(false)}
+                    className="h-9 text-xs"
+                  >
+                    <DollarSign className="h-4 w-4 mr-1" /> Pago normal
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={ccMode ? "default" : "outline"}
+                    onClick={() => { setCcMode(true); setDiscountPercent(0); }}
+                    className="h-9 text-xs"
+                  >
+                    <Wallet className="h-4 w-4 mr-1" /> Cuenta corriente
+                  </Button>
+                </div>
+              )}
+
+              {ccMode ? (
+                <div className="flex-1 space-y-3 overflow-y-auto">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Cliente</Label>
+                    <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="Elegí un cliente…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {customers.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">No hay clientes cargados. Cargalos en el menú Clientes.</div>
+                        ) : (
+                          customers.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {selectedCustomer ? (
+                    <div className="rounded-lg border border-border bg-card p-3 space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Saldo actual</span>
+                        <span className={`font-semibold tabular-nums ${ccSaldo > 0 ? "text-red-600" : ""}`}>{formatCurrency(ccSaldo)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Límite</span>
+                        <span className="font-semibold tabular-nums">{ccLimite > 0 ? formatCurrency(ccLimite) : "Sin límite"}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">A cargar ahora</span>
+                        <span className="font-semibold tabular-nums text-primary">+{formatCurrency(ccChargeAmount)}</span>
+                      </div>
+                      <Separator />
+                      <div className="flex justify-between">
+                        <span className="font-medium">Nuevo saldo</span>
+                        <span className={`font-bold tabular-nums ${ccExcedeLimite ? "text-red-600" : ""}`}>{formatCurrency(ccNuevoSaldo)}</span>
+                      </div>
+                      {ccExcedeLimite && (
+                        <p className="text-xs text-amber-600 mt-1">⚠️ Supera el límite de crédito. Se permite igual.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Elegí un cliente para cargar el consumo a su cuenta corriente.</p>
+                  )}
+
+                  <p className="text-xs text-muted-foreground">
+                    El consumo se suma a la deuda del cliente y <strong>no entra a la caja del día</strong>.
+                  </p>
+                </div>
+              ) : (
+              <>
               {/* Lista de formas de pago */}
               <div className="flex-1 space-y-2 overflow-y-auto">
                 {paymentItems.map((item, index) => (
@@ -746,11 +861,14 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
                   </p>
                 )}
               </div>
+              </>
+              )}
             </div>
           </div>
 
           {/* Footer con botones */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 px-4 sm:px-8 py-4 sm:py-5 border-t border-border bg-card shrink-0">
+            {!ccMode && (
             <Button
               variant="outline"
               onClick={() => {
@@ -781,6 +899,7 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
               <span className="hidden sm:inline">Facturar y cerrar mesa</span>
               <span className="sm:hidden">Facturar</span>
             </Button>
+            )}
 
             <Button
               onClick={handleSubmit}
@@ -793,7 +912,7 @@ export function CloseTableModal({ open, onClose, table, onComplete }: CloseTable
                   Cerrando...
                 </>
               ) : (
-                `Cerrar mesa ${table.table_number}`
+                ccMode ? "Cobrar a cuenta corriente" : `Cerrar mesa ${table.table_number}`
               )}
             </Button>
           </div>
