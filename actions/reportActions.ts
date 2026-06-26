@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { checkUserPermission } from "./permissionActions";
-import { getBusinessDateString, getArgHour } from "@/lib/businessDay";
+import { getBusinessDateString, getArgHour, getArgWeekday } from "@/lib/businessDay";
 
 // Devuelve el primer elemento si es array, o el objeto si es to-one (embeds de Supabase)
 const one = (x: any) => (Array.isArray(x) ? x[0] : x);
@@ -805,5 +805,132 @@ export async function getSalesComparison(periodType: 'daily' | 'weekly' | 'month
   } catch (error: any) {
     console.error("Error fetching sales comparison:", error);
     return { success: false, message: error.message || "Error al obtener comparación de ventas", data: null };
+  }
+}
+
+// ============================================
+// REPORTES NUEVOS (Ola 2)
+// ============================================
+
+// Cuánto te deben hoy (cuenta corriente) + ranking de deudores. Es estado ACTUAL, no del período.
+export async function getAccountsReceivable() {
+  try {
+    const supabase = await createClient();
+    const access = await ensureReportsAccess(supabase);
+    if (!access.ok) {
+      return { success: false, message: access.message, data: null };
+    }
+
+    const customers = await fetchAllRows((from, to) =>
+      supabase
+        .from("customers")
+        .select("id, name, current_balance, credit_limit")
+        .gt("current_balance", 0)
+        .order("current_balance", { ascending: false })
+        .range(from, to)
+    );
+
+    const total_debt = customers.reduce((sum, c) => sum + (Number(c.current_balance) || 0), 0);
+
+    return {
+      success: true,
+      data: {
+        total_debt,
+        debtor_count: customers.length,
+        debtors: customers.map((c) => ({
+          id: c.id,
+          name: c.name,
+          balance: Number(c.current_balance) || 0,
+          credit_limit: Number(c.credit_limit) || 0,
+        })),
+      },
+    };
+  } catch (error: any) {
+    console.error("Error fetching accounts receivable:", error);
+    return { success: false, message: error.message || "Error al obtener cuentas por cobrar", data: null };
+  }
+}
+
+// Mapa de calor: ventas por día de semana (0=Dom … 6=Sáb) × hora (0-23), en HORA ARGENTINA.
+export async function getSalesHeatmap(startDate: string, endDate: string) {
+  try {
+    const supabase = await createClient();
+    const access = await ensureReportsAccess(supabase);
+    if (!access.ok) {
+      return { success: false, message: access.message, data: [] };
+    }
+
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select("total_amount, created_at")
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
+
+    // matriz[weekday][hour] = { total, count }
+    const cells = new Map<string, { weekday: number; hour: number; total: number; count: number }>();
+    data.forEach((sale) => {
+      const d = new Date(sale.created_at);
+      const weekday = getArgWeekday(d);
+      const hour = getArgHour(d);
+      const key = `${weekday}-${hour}`;
+      const cur = cells.get(key) || { weekday, hour, total: 0, count: 0 };
+      cur.total += sale.total_amount || 0;
+      cur.count += 1;
+      cells.set(key, cur);
+    });
+
+    return { success: true, data: Array.from(cells.values()) };
+  } catch (error: any) {
+    console.error("Error fetching sales heatmap:", error);
+    return { success: false, message: error.message || "Error al obtener mapa de calor", data: [] };
+  }
+}
+
+// Ventas por tipo de operación: mesa / mostrador / delivery.
+export async function getSalesByType(startDate: string, endDate: string) {
+  try {
+    const supabase = await createClient();
+    const access = await ensureReportsAccess(supabase);
+    if (!access.ok) {
+      return { success: false, message: access.message, data: [] };
+    }
+
+    const data = await fetchAllRows((from, to) =>
+      supabase
+        .from("sales")
+        .select("total_amount, sale_type")
+        .eq("status", "completed")
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
+        .range(from, to)
+    );
+
+    const labels: Record<string, string> = {
+      table: "Mesa",
+      counter: "Mostrador",
+      delivery: "Delivery",
+    };
+
+    const typeMap = new Map<string, { type: string; label: string; total_sales: number; transaction_count: number }>();
+    data.forEach((sale) => {
+      const type = sale.sale_type || "table";
+      const cur = typeMap.get(type) || { type, label: labels[type] || type, total_sales: 0, transaction_count: 0 };
+      cur.total_sales += sale.total_amount || 0;
+      cur.transaction_count += 1;
+      typeMap.set(type, cur);
+    });
+
+    const result = Array.from(typeMap.values())
+      .map((t) => ({ ...t, avg_ticket: t.transaction_count > 0 ? t.total_sales / t.transaction_count : 0 }))
+      .sort((a, b) => b.total_sales - a.total_sales);
+
+    return { success: true, data: result };
+  } catch (error: any) {
+    console.error("Error fetching sales by type:", error);
+    return { success: false, message: error.message || "Error al obtener ventas por tipo", data: [] };
   }
 }

@@ -26,7 +26,10 @@ import {
   getSalesByEmployee,
   getProfitabilityReport,
   getCategoryPerformance,
-  getSalesComparison
+  getSalesComparison,
+  getAccountsReceivable,
+  getSalesHeatmap,
+  getSalesByType
 } from "@/actions/reportActions";
 import { formatCurrency } from "@/lib/utils";
 import { getBusinessDateString, argDayToUtcRange } from "@/lib/businessDay";
@@ -43,6 +46,50 @@ const fmtDayLabel = (dateStr: string) => {
   });
 };
 
+const WEEKDAYS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+// Mapa de calor de ventas por día de semana × hora (hora Argentina)
+function SalesHeatmap({ cells }: { cells: any[] }) {
+  if (!cells || !cells.length) {
+    return <p className="py-8 text-center text-muted-foreground">Sin datos para el período</p>;
+  }
+  const max = cells.reduce((m, c) => Math.max(m, c.total || 0), 0);
+  const get = (wd: number, h: number) => cells.find((c) => c.weekday === wd && c.hour === h);
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[680px]">
+        <div className="flex">
+          <div className="w-9 shrink-0" />
+          {hours.map((h) => (
+            <div key={h} className="flex-1 text-center text-[9px] text-muted-foreground">{h}</div>
+          ))}
+        </div>
+        {WEEKDAYS.map((name, wd) => (
+          <div key={wd} className="flex items-center">
+            <div className="w-9 shrink-0 text-xs font-medium text-muted-foreground">{name}</div>
+            {hours.map((h) => {
+              const cell = get(wd, h);
+              const v = cell?.total || 0;
+              const intensity = max > 0 ? v / max : 0;
+              const bg = v > 0 ? `rgba(168,52,28,${(0.12 + intensity * 0.78).toFixed(3)})` : "transparent";
+              return (
+                <div
+                  key={h}
+                  className="m-[1px] aspect-square flex-1 rounded-[3px] border border-border/40"
+                  style={{ backgroundColor: bg }}
+                  title={`${name} ${String(h).padStart(2, "0")}h · ${formatCurrency(v)} · ${cell?.count || 0} ventas`}
+                />
+              );
+            })}
+          </div>
+        ))}
+        <p className="mt-2 text-xs text-muted-foreground">Más oscuro = más ventas. Pasá el mouse para ver el detalle.</p>
+      </div>
+    </div>
+  );
+}
+
 interface ReportData {
   stats: any;
   topProducts: any[];
@@ -53,6 +100,9 @@ interface ReportData {
   profitabilityReport: any[];
   categoryPerformance: any[];
   salesComparison: any;
+  accountsReceivable: any;
+  heatmap: any[];
+  salesByType: any[];
 }
 
 export function ReportsContent() {
@@ -79,6 +129,9 @@ export function ReportsContent() {
     profitabilityReport: [],
     categoryPerformance: [],
     salesComparison: null,
+    accountsReceivable: null,
+    heatmap: [],
+    salesByType: [],
   });
 
   useEffect(() => {
@@ -108,6 +161,9 @@ export function ReportsContent() {
       const profitabilityReport = await getProfitabilityReport(startDateISO, endDateISO);
       const categoryPerformance = await getCategoryPerformance(startDateISO, endDateISO);
       const salesComparison = await getSalesComparison('monthly', endDateISO);
+      const accountsReceivable = await getAccountsReceivable();
+      const heatmap = await getSalesHeatmap(startDateISO, endDateISO);
+      const salesByType = await getSalesByType(startDateISO, endDateISO);
 
       setReportData({
         stats: stats.data,
@@ -119,6 +175,9 @@ export function ReportsContent() {
         profitabilityReport: profitabilityReport.data || [],
         categoryPerformance: categoryPerformance.data || [],
         salesComparison: salesComparison.data,
+        accountsReceivable: accountsReceivable.data,
+        heatmap: heatmap.data || [],
+        salesByType: salesByType.data || [],
       });
     } catch (error) {
       console.error("Error loading reports:", error);
@@ -487,6 +546,44 @@ export function ReportsContent() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Ventas por Tipo */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Ventas por tipo</CardTitle>
+              <CardDescription>Mesa, mostrador y delivery</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {reportData.salesByType && reportData.salesByType.length > 0 ? (
+                  reportData.salesByType.map((t: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <p className="font-medium">{t.label}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {t.transaction_count} ventas · {formatCurrency(t.avg_ticket)} promedio
+                        </p>
+                      </div>
+                      <p className="font-semibold">{formatCurrency(t.total_sales)}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="py-8 text-center text-muted-foreground">Sin datos del período</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Mapa de calor */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Mapa de calor de ventas</CardTitle>
+              <CardDescription>Cuándo vendés más — día de semana × hora (hora Argentina)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SalesHeatmap cells={reportData.heatmap} />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* TAB 4: ANALISIS FINANCIERO */}
@@ -604,6 +701,48 @@ export function ReportsContent() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Cuenta corriente: cuánto te deben */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Cuenta corriente — cuánto te deben</CardTitle>
+              <CardDescription>Saldo actual de los clientes (estado de hoy, no depende del período)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {reportData.accountsReceivable && reportData.accountsReceivable.debtor_count > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+                    <div>
+                      <p className="font-medium text-amber-700">Total por cobrar</p>
+                      <p className="text-sm text-amber-600">
+                        {reportData.accountsReceivable.debtor_count} cliente(s) con saldo
+                      </p>
+                    </div>
+                    <p className="text-2xl font-bold text-amber-700">
+                      {formatCurrency(reportData.accountsReceivable.total_debt)}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {reportData.accountsReceivable.debtors.slice(0, 8).map((d: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between rounded-lg border p-3">
+                        <div>
+                          <p className="font-medium">{d.name}</p>
+                          {d.credit_limit > 0 && (
+                            <p className="text-sm text-muted-foreground">Límite {formatCurrency(d.credit_limit)}</p>
+                          )}
+                        </div>
+                        <p className={`font-semibold ${d.credit_limit > 0 && d.balance > d.credit_limit ? "text-red-600" : "text-foreground"}`}>
+                          {formatCurrency(d.balance)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="py-8 text-center text-muted-foreground">Ningún cliente con deuda 🎉</p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
